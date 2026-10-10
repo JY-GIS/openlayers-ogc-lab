@@ -37,9 +37,23 @@ body {
   font-size: 20px;
 }
 
-.header span {
+.header-info {
+  display: flex;
+  align-items: center;
+  gap: 24px;
   color: #6b7280;
   font-size: 14px;
+}
+
+.coordinate-display {
+  min-width: 190px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.coordinate-value {
+  color: #374151;
 }
 
 .map {
