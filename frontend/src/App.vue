@@ -42,7 +42,7 @@ onMounted(() => {
 
     // 地图初始视图
     view: new View({
-      center: fromLonLat([114.05, 22.54]),  // 坐标转换 4326 -> 3857
+      center: fromLonLat([120.38, 36.06]),  // 坐标转换 4326 -> 3857
       zoom: 12,
     }),
   })
