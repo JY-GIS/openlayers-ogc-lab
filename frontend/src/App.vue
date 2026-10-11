@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 
+import LayerPanel from './components/LayerPanel.vue'
+import { createFacilitiesWmsLayer } from './services/ogcWms'
+
 import Map from 'ol/Map'    // 相当于 Cesium 的 Viewer
 import View from 'ol/View'  // 相当于 Cesium 的 Camera / Scene
 
@@ -24,6 +27,16 @@ const coordinateContainer = ref<HTMLDivElement | null>(null)
 // 保存 OpenLayers 地图实例
 let map: Map | null = null
 
+// 保存设施点 WMS 图层的显示状态
+const facilitiesWmsVisible = ref(true)
+// 创建设施点 WMS 图层
+const facilitiesWmsLayer = createFacilitiesWmsLayer()
+// 同步界面状态并切换设施点 WMS 图层
+function handleFacilitiesVisibilityChange(visible: boolean) {
+  facilitiesWmsVisible.value = visible
+  facilitiesWmsLayer.setVisible(visible)
+}
+
 // Vue 组件挂载后初始化地图
 onMounted(() => {
   if (!mapContainer.value || !coordinateContainer.value) return
@@ -38,6 +51,7 @@ onMounted(() => {
       new TileLayer({
         source: new OSM(),
       }),
+      facilitiesWmsLayer,
     ],
 
     // 地图初始视图
@@ -79,5 +93,9 @@ onBeforeUnmount(() => {
     </header>
 
     <main ref="mapContainer" class="map"></main>
+    <LayerPanel
+      :facilities-visible="facilitiesWmsVisible"
+      @visibility-change="handleFacilitiesVisibilityChange"
+    />
   </div>
 </template>
