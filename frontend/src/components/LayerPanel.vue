@@ -1,12 +1,20 @@
 <script setup lang="ts">
+import type { BaseMapType } from '../services/baseMaps'
 
 defineProps<{
+  selectedBaseMap: BaseMapType
   facilitiesVisible: boolean
 }>()
 
 const emit = defineEmits<{
+  'base-map-change': [baseMap: BaseMapType]
   'visibility-change': [visible: boolean]
 }>()
+
+// 将用户选择的底图通知父组件
+function selectBaseMap(baseMap: BaseMapType) {
+  emit('base-map-change', baseMap)
+}
 
 // 将复选框的新状态通知父组件
 function handleVisibilityChange(event: Event) {
@@ -18,16 +26,42 @@ function handleVisibilityChange(event: Event) {
 
 <template>
   <aside class="layer-panel">
-    <h3>WMS 图层</h3>
+    <section class="layer-section">
+      <h3>底图</h3>
 
-    <label class="layer-item">
-      <input
-        type="checkbox"
-        :checked="facilitiesVisible"
-        @change="handleVisibilityChange"
-      >
-      <span>设施点</span>
-    </label>
+      <label class="layer-item">
+        <input
+          type="radio"
+          name="base-map"
+          :checked="selectedBaseMap === 'osm'"
+          @change="selectBaseMap('osm')"
+        >
+        <span>OpenStreetMap</span>
+      </label>
+
+      <label class="layer-item">
+        <input
+          type="radio"
+          name="base-map"
+          :checked="selectedBaseMap === 'topographic'"
+          @change="selectBaseMap('topographic')"
+        >
+        <span>地形底图</span>
+      </label>
+    </section>
+
+    <section class="layer-section">
+      <h3>WMS 图层</h3>
+
+      <label class="layer-item">
+        <input
+          type="checkbox"
+          :checked="facilitiesVisible"
+          @change="handleVisibilityChange"
+        >
+        <span>设施点</span>
+      </label>
+    </section>
   </aside>
 </template>
 
@@ -57,5 +91,15 @@ function handleVisibilityChange(event: Event) {
   color: #374151;
   font-size: 14px;
   cursor: pointer;
+}
+
+.layer-section + .layer-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.layer-item + .layer-item {
+  margin-top: 8px;
 }
 </style>

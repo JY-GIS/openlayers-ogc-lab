@@ -3,12 +3,12 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 
 import LayerPanel from './components/LayerPanel.vue'
 import { createFacilitiesWmsLayer } from './services/ogcWms'
+import { createBaseMapLayers } from './services/baseMaps'
+import type { BaseMapType } from './services/baseMaps'
 
 import Map from 'ol/Map'    // 相当于 Cesium 的 Viewer
 import View from 'ol/View'  // 相当于 Cesium 的 Camera / Scene
 
-import TileLayer from 'ol/layer/Tile'
-import OSM from 'ol/source/OSM'
 import MousePosition from 'ol/control/MousePosition'
 import { createStringXY } from 'ol/coordinate'
 
@@ -26,6 +26,17 @@ const coordinateContainer = ref<HTMLDivElement | null>(null)
 
 // 保存 OpenLayers 地图实例
 let map: Map | null = null
+
+// 保存当前选择的底图
+const selectedBaseMap = ref<BaseMapType>('osm')
+// 创建标准地图和地形地图两个底图
+const baseMapLayers = createBaseMapLayers()
+// 切换底图并保证同一时刻只显示一个底图
+function handleBaseMapChange(baseMap: BaseMapType) {
+  selectedBaseMap.value = baseMap
+  baseMapLayers.osmLayer.setVisible(baseMap === 'osm')
+  baseMapLayers.topographicLayer.setVisible(baseMap === 'topographic')
+}
 
 // 保存设施点 WMS 图层的显示状态
 const facilitiesWmsVisible = ref(true)
@@ -48,9 +59,8 @@ onMounted(() => {
 
     // 地图图层
     layers: [
-      new TileLayer({
-        source: new OSM(),
-      }),
+      baseMapLayers.osmLayer,
+      baseMapLayers.topographicLayer,
       facilitiesWmsLayer,
     ],
 
@@ -94,7 +104,9 @@ onBeforeUnmount(() => {
 
     <main ref="mapContainer" class="map"></main>
     <LayerPanel
+      :selected-base-map="selectedBaseMap"
       :facilities-visible="facilitiesWmsVisible"
+      @base-map-change="handleBaseMapChange"
       @visibility-change="handleFacilitiesVisibilityChange"
     />
   </div>
