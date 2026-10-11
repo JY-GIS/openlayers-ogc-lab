@@ -3,17 +3,26 @@ import { ref } from 'vue'
 
 import type { FacilityInput } from '../services/ogcWfsTransaction'
 
-type EditorMode = 'idle' | 'drawing' | 'form' | 'submitting'
+type EditorMode =
+  | 'idle'
+  | 'drawing'
+  | 'form'
+  | 'submitting'
+  | 'editing'
+  | 'updating'
 
-defineProps<{
+const props = defineProps<{
   mode: EditorMode
   message: string
+  selectedFacility: FacilityInput | null
 }>()
 
 const emit = defineEmits<{
   start: []
+  edit: []
   cancel: []
   submit: [input: FacilityInput]
+  update: [input: FacilityInput]
 }>()
 
 const name = ref('')
@@ -28,13 +37,30 @@ function startDrawing() {
   emit('start')
 }
 
+// 使用选中设施点的现有属性初始化修改表单
+function startUpdating() {
+  if (!props.selectedFacility) return
+
+  name.value = props.selectedFacility.name
+  facilityType.value = props.selectedFacility.facilityType
+  description.value = props.selectedFacility.description
+  emit('edit')
+}
+
 // 将表单属性提交给父组件
 function submitFacility() {
-  emit('submit', {
+  const input: FacilityInput = {
     name: name.value.trim(),
     facilityType: facilityType.value.trim(),
     description: description.value.trim(),
-  })
+  }
+
+  if (props.mode === 'editing') {
+    emit('update', input)
+    return
+  }
+
+  emit('submit', input)
 }
 
 // 通知父组件取消本次设施点新增
@@ -47,14 +73,24 @@ function cancelEditing() {
   <aside class="editor-panel">
     <h3>WFS-T 设施点编辑</h3>
 
-    <button
-      v-if="mode === 'idle'"
-      type="button"
-      class="primary-button"
-      @click="startDrawing"
-    >
-      新增设施点
-    </button>
+    <div v-if="mode === 'idle'" class="idle-actions">
+      <button
+          type="button"
+          class="primary-button"
+          @click="startDrawing"
+      >
+        新增设施点
+      </button>
+
+      <button
+        type="button"
+        :class="selectedFacility ? 'primary-button' : 'secondary-button'"
+        :disabled="!selectedFacility"
+        @click="startUpdating"
+      >
+        修改选中设施点
+      </button>
+    </div>
 
     <div v-else-if="mode === 'drawing'">
       <p class="editor-tip">
@@ -75,6 +111,9 @@ function cancelEditing() {
       class="editor-form"
       @submit.prevent="submitFacility"
     >
+      <p v-if="mode === 'editing'" class="editor-tip">
+        可拖动黄色设施点修改位置，也可以直接修改属性
+      </p>
       <label>
         <span>名称</span>
         <input
@@ -108,15 +147,20 @@ function cancelEditing() {
         <button
           type="submit"
           class="primary-button"
-          :disabled="mode === 'submitting'"
+          :disabled="mode === 'submitting' || mode === 'updating'"
         >
-          {{ mode === 'submitting' ? '提交中...' : '提交新增' }}
+          {{
+             mode === 'submitting'
+               ? '提交中...' : mode === 'updating'
+                 ? '修改中...' : mode === 'editing'
+                   ? '提交修改' : '提交新增'
+          }}
         </button>
 
         <button
           type="button"
           class="secondary-button"
-          :disabled="mode === 'submitting'"
+          :disabled="mode === 'submitting' || mode === 'updating'"
           @click="cancelEditing"
         >
           取消
@@ -216,5 +260,10 @@ function cancelEditing() {
 .secondary-button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.idle-actions {
+  display: grid;
+  gap: 8px;
 }
 </style>

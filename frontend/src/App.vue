@@ -8,7 +8,7 @@ import { createFacilitiesWmsLayer } from './services/ogcWms'
 import { createFacilitiesWmtsLayer } from './services/ogcWmts'
 import { createWfsLayers } from './services/ogcWfs'
 import { createBaseMapLayers } from './services/baseMaps'
-import { insertFacility } from './services/ogcWfsTransaction'
+import { insertFacility, updateFacility } from './services/ogcWfsTransaction'
 import type { FacilityInput } from './services/ogcWfsTransaction'
 import type { BaseMapType } from './services/baseMaps'
 import type { WfsLoadState } from './services/ogcWfs'
@@ -21,6 +21,7 @@ import type Feature from 'ol/Feature'
 import type Geometry from 'ol/geom/Geometry'
 import Select from 'ol/interaction/Select'
 import Draw from 'ol/interaction/Draw'
+import Modify from 'ol/interaction/Modify'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style'
@@ -41,7 +42,13 @@ interface SelectedFeatureInfo {
   geometryType: string
 }
 
-type EditorMode = 'idle' | 'drawing' | 'form' | 'submitting'
+type EditorMode =
+  | 'idle'
+  | 'drawing'
+  | 'form'
+  | 'submitting'
+  | 'editing'
+  | 'updating'
 
 // 获取模板中地图容器的 DOM 引用
 const mapContainer = ref<HTMLDivElement | null>(null)
@@ -55,6 +62,10 @@ let map: Map | null = null
 let selectInteraction: Select | null = null
 // 保存点绘制交互，绘制完成或取消时用于移除
 let drawInteraction: Draw | null = null
+// 保存几何修改交互，提交或取消时用于移除
+let modifyInteraction: Modify | null = null
+// 保存当前从 WFS 选中的原始要素
+let selectedWfsFeature: Feature<Geometry> | null = null
 // 保存当前等待提交的临时设施点
 let draftFeature: Feature<Geometry> | null = null
 // 保存当前选择的底图
@@ -75,6 +86,7 @@ const facilitiesWmtsVisible = ref(false)
 let facilitiesWmtsLayer: TileLayer<WMTS> | null = null
 const wfsVisible = ref(false)
 const selectedFeature = ref<SelectedFeatureInfo | null>(null)
+const selectedFacilityInput = ref<FacilityInput | null>(null)
 
 const editorMode = ref<EditorMode>('idle')
 const transactionMessage = ref('')
@@ -154,6 +166,21 @@ function createSelectedFeatureInfo(feature: Feature<Geometry>): SelectedFeatureI
   }
 }
 
+// 判断选中的要素是否属于当前允许编辑的 facilities 图层
+function isFacilityFeature(feature: Feature<Geometry>): boolean {
+  const featureId = String(feature.getId() ?? '')
+  return featureId.startsWith('facilities.') && feature.getGeometry()?.getType() === 'Point'
+}
+
+// 恢复原要素样式，并清除当前 WFS 要素选择及属性状态
+function clearSelectedWfsFeature() {
+  selectedWfsFeature?.setStyle(undefined)
+  selectInteraction?.getFeatures().clear()
+  selectedWfsFeature = null
+  selectedFeature.value = null
+  selectedFacilityInput.value = null
+}
+
 // 从地图中移除当前 Draw 交互
 function removeDrawInteraction() {
   if (map && drawInteraction) {
@@ -163,12 +190,23 @@ function removeDrawInteraction() {
   drawInteraction = null
 }
 
+// 从地图中移除当前 Modify 交互
+function removeModifyInteraction() {
+  if (map && modifyInteraction) {
+    map.removeInteraction(modifyInteraction)
+  }
+
+  modifyInteraction = null
+}
+
 // 开始在地图上绘制一个临时设施点
 function startFacilityInsert() {
   if (!map) return
 
   handleWfsVisibilityChange(true)
   removeDrawInteraction()
+  removeModifyInteraction()
+  clearSelectedWfsFeature()
   draftSource.clear()
   draftFeature = null
   transactionMessage.value = ''
@@ -190,14 +228,45 @@ function startFacilityInsert() {
   editorMode.value = 'drawing'
 }
 
-// 取消当前新增操作并清除临时点
-function cancelFacilityInsert() {
+// 取消当前新增或修改操作并清除临时点
+function cancelFacilityEditing() {
   removeDrawInteraction()
+  removeModifyInteraction()
   draftSource.clear()
   draftFeature = null
+  clearSelectedWfsFeature()
   editorMode.value = 'idle'
   transactionMessage.value = ''
   selectInteraction?.setActive(true)
+}
+
+// 将选中的服务器设施点复制到临时图层并启动 Modify
+function startFacilityUpdate() {
+  if (!map || !selectedWfsFeature || !selectedFacilityInput.value) {
+    return
+  }
+
+  removeDrawInteraction()
+  removeModifyInteraction()
+  draftSource.clear()
+  transactionMessage.value = ''
+
+  // clone 避免提交成功前直接修改 WFS 图层中的原始要素
+  draftFeature = selectedWfsFeature.clone()
+
+  // clone 会复制 Select 的红色样式，清除后才会使用草稿图层的黄色样式
+  draftFeature.setStyle(undefined)
+  draftSource.addFeature(draftFeature)
+
+  // 先清除 Select 的红色样式，再临时隐藏服务器原要素
+  selectInteraction?.getFeatures().clear()
+  selectedWfsFeature.setStyle([])
+  selectInteraction?.setActive(false)
+
+  modifyInteraction = new Modify({ source: draftSource })
+
+  map.addInteraction(modifyInteraction)
+  editorMode.value = 'editing'
 }
 
 // 提交 WFS-T Insert，并从服务器重新读取图层
@@ -220,6 +289,39 @@ async function submitFacilityInsert(input: FacilityInput) {
   } catch (error) {
     editorMode.value = 'form'
     transactionMessage.value = error instanceof Error ? error.message : '设施点新增失败'
+  }
+}
+
+// 提交 WFS-T Update，并重新读取服务器数据
+async function submitFacilityUpdate(input: FacilityInput) {
+  const featureId = selectedWfsFeature?.getId()
+
+  if (!draftFeature || !featureId) return
+
+  editorMode.value = 'updating'
+  transactionMessage.value = ''
+
+  try {
+    await updateFacility(
+      draftFeature,
+      input,
+      String(featureId),
+    )
+
+    removeModifyInteraction()
+    draftSource.clear()
+    draftFeature = null
+    clearSelectedWfsFeature()
+    editorMode.value = 'idle'
+    transactionMessage.value = `修改成功：${featureId}`
+    selectInteraction?.setActive(true)
+
+    wfsLayers.forEach(layer => {
+      layer.getSource()?.refresh()
+    })
+  } catch (error) {
+    editorMode.value = 'editing'
+    transactionMessage.value = error instanceof Error ? error.message : '设施点修改失败'
   }
 }
 
@@ -255,10 +357,20 @@ onMounted(async () => {
     style: selectedWfsStyle,
   })
 
-  // 将选中的 OpenLayers Feature 转换成属性面板数据
+  // 保存选中要素，并在设施点被选中时准备编辑属性
   selectInteraction.on('select', event => {
     const feature = event.selected[0] as Feature<Geometry> | undefined
+
+    selectedWfsFeature = feature ?? null
     selectedFeature.value = feature ? createSelectedFeatureInfo(feature) : null
+
+    selectedFacilityInput.value = feature && isFacilityFeature(feature)
+      ? {
+          name: String(feature.get('name') ?? ''),
+          facilityType: String(feature.get('facility_type') ?? ''),
+          description: String(feature.get('description') ?? ''),
+        }
+      : null
   })
 
   map.addInteraction(selectInteraction)
@@ -281,6 +393,7 @@ onMounted(async () => {
 // 组件卸载时解除地图挂载
 onBeforeUnmount(() => {
   removeDrawInteraction()
+  removeModifyInteraction()
 
   if (map && selectInteraction) {
     map.removeInteraction(selectInteraction)
@@ -325,9 +438,12 @@ onBeforeUnmount(() => {
     <FeatureEditor
       :mode="editorMode"
       :message="transactionMessage"
+      :selected-facility="selectedFacilityInput"
       @start="startFacilityInsert"
-      @cancel="cancelFacilityInsert"
+      @edit="startFacilityUpdate"
+      @cancel="cancelFacilityEditing"
       @submit="submitFacilityInsert"
+      @update="submitFacilityUpdate"
     />
   </div>
 </template>

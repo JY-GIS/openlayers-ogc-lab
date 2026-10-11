@@ -1,6 +1,7 @@
 import Feature from 'ol/Feature'
 import GML32 from 'ol/format/GML32'
 import WFS from 'ol/format/WFS'
+import type { WriteTransactionOptions } from 'ol/format/WFS'
 import type Geometry from 'ol/geom/Geometry'
 import Point from 'ol/geom/Point'
 
@@ -19,29 +20,45 @@ const wfsFormat = new WFS({
     gmlFormat: new GML32(),
 })
 
-// 将地图上的临时点转换成符合 facilities Schema 的事务要素
-function createFacilityInsertFeature(mapFeature: Feature<Geometry>, input: FacilityInput): Feature<Point> {
+const transactionOptions: WriteTransactionOptions = {
+    featureNS: FEATURE_NAMESPACE,
+    featurePrefix: 'ogc_lab',
+    featureType: 'facilities',
+    srsName: TRANSACTION_PROJECTION,
+    version: '2.0.0',
+    nativeElements: [],
+}
+
+// 将地图设施点转换成符合 facilities Schema 的事务要素
+function createFacilityTransactionFeature(
+    mapFeature: Feature<Geometry>,
+    input: FacilityInput,
+    featureId?: string,
+): Feature<Point> {
     const mapGeometry = mapFeature.getGeometry()
 
     if (!(mapGeometry instanceof Point)) {
-        throw new Error('只能新增点类型的设施')
+        throw new Error('只能编辑点类型的设施')
     }
 
     // Draw 产生的是 EPSG:3857，写入前转换成经度、纬度顺序的 CRS:84
     const dataGeometry = mapGeometry.clone()
     dataGeometry.transform('EPSG:3857', TRANSACTION_PROJECTION)
 
-    const insertFeature = new Feature<Point>({
+    const transactionFeature = new Feature<Point>({
         name: input.name,
         facility_type: input.facilityType,
         description: input.description,
         geom: dataGeometry,
     })
 
-    // GeoServer Schema 中的几何字段名是 geom，而不是默认的 geometry
-    insertFeature.setGeometryName('geom')
+    transactionFeature.setGeometryName('geom')
 
-    return insertFeature
+    if (featureId) {
+        transactionFeature.setId(featureId)
+    }
+
+    return transactionFeature
 }
 
 // 从 GeoServer XML 异常响应中提取可读错误信息
@@ -53,24 +70,8 @@ function readExceptionMessage(xmlText: string): string | null {
     return exceptionNode?.textContent?.trim() || null
 }
 
-// 将一个设施点作为 WFS Transaction Insert 提交到 GeoServer
-export async function insertFacility(mapFeature: Feature<Geometry>, input: FacilityInput): Promise<string> {
-    const insertFeature = createFacilityInsertFeature(mapFeature, input)
-
-    const transactionNode = wfsFormat.writeTransaction(
-        [insertFeature],
-        [],
-        [],
-        {
-            featureNS: FEATURE_NAMESPACE,
-            featurePrefix: 'ogc_lab',
-            featureType: 'facilities',
-            srsName: TRANSACTION_PROJECTION,
-            version: '2.0.0',
-            nativeElements: [],
-        },
-    )
-
+// 向 GeoServer 提交事务 XML，并解析标准事务响应
+async function submitTransaction(transactionNode: Node) {
     const transactionXml = new XMLSerializer().serializeToString(transactionNode)
 
     const response = await fetch(WFS_TRANSACTION_URL, {
@@ -85,16 +86,60 @@ export async function insertFacility(mapFeature: Feature<Geometry>, input: Facil
     const exceptionMessage = readExceptionMessage(responseText)
 
     if (!response.ok || exceptionMessage) {
-        throw new Error(
-            exceptionMessage ?? `WFS-T Insert 请求失败：${response.status}`,
-        )
+        throw new Error(exceptionMessage ?? `WFS-T 请求失败：${response.status}`)
     }
 
     const transactionResponse = wfsFormat.readTransactionResponse(responseText)
 
-    if (!transactionResponse || transactionResponse.transactionSummary.totalInserted !== 1) {
+    if (!transactionResponse) {
+        throw new Error('无法解析 GeoServer 事务响应')
+    }
+
+    return transactionResponse
+}
+
+// 将一个设施点作为 WFS Transaction Insert 提交到 GeoServer
+export async function insertFacility(mapFeature: Feature<Geometry>, input: FacilityInput): Promise<string> {
+    const insertFeature = createFacilityTransactionFeature(mapFeature, input)
+
+    const transactionNode = wfsFormat.writeTransaction(
+        [insertFeature],
+        [],
+        [],
+        transactionOptions,
+    )
+
+    const transactionResponse = await submitTransaction(transactionNode)
+
+    if (transactionResponse.transactionSummary.totalInserted !== 1) {
         throw new Error('GeoServer 未确认新增设施点')
     }
 
     return transactionResponse.insertIds[0] ?? '新增设施点'
+}
+
+// 将设施点的最新几何和属性作为 WFS Transaction Update 提交
+export async function updateFacility(
+    mapFeature: Feature<Geometry>,
+    input: FacilityInput,
+    featureId: string,
+): Promise<void> {
+    const updateFeature = createFacilityTransactionFeature(
+        mapFeature,
+        input,
+        featureId,
+    )
+
+    const transactionNode = wfsFormat.writeTransaction(
+        [],
+        [updateFeature],
+        [],
+        transactionOptions,
+    )
+
+    const transactionResponse = await submitTransaction(transactionNode)
+
+    if (transactionResponse.transactionSummary.totalUpdated !== 1) {
+        throw new Error('GeoServer 未确认修改设施点')
+    }
 }
