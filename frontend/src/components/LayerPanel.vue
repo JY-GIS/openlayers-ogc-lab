@@ -4,11 +4,13 @@ import type { BaseMapType } from '../services/baseMaps'
 defineProps<{
   selectedBaseMap: BaseMapType
   facilitiesVisible: boolean
+  facilitiesWmtsVisible: boolean
 }>()
 
 const emit = defineEmits<{
   'base-map-change': [baseMap: BaseMapType]
   'visibility-change': [visible: boolean]
+  'wmts-visibility-change': [visible: boolean]
 }>()
 
 // 将用户选择的底图通知父组件
@@ -20,6 +22,12 @@ function selectBaseMap(baseMap: BaseMapType) {
 function handleVisibilityChange(event: Event) {
   const checkbox = event.target as HTMLInputElement
   emit('visibility-change', checkbox.checked)
+}
+
+// 将 WMTS 复选框的新状态通知父组件
+function handleWmtsVisibilityChange(event: Event) {
+  const checkbox = event.target as HTMLInputElement
+  emit('wmts-visibility-change', checkbox.checked)
 }
 
 </script>
@@ -51,7 +59,7 @@ function handleVisibilityChange(event: Event) {
     </section>
 
     <section class="layer-section">
-      <h3>WMS 图层</h3>
+      <h3>OGC 图层</h3>
 
       <label class="layer-item">
         <input
@@ -59,7 +67,16 @@ function handleVisibilityChange(event: Event) {
           :checked="facilitiesVisible"
           @change="handleVisibilityChange"
         >
-        <span>设施点</span>
+        <span>WMS 设施点</span>
+      </label>
+
+      <label class="layer-item">
+        <input
+          type="checkbox"
+          :checked="facilitiesWmtsVisible"
+          @change="handleWmtsVisibilityChange"
+        >
+        <span>WMTS 设施点</span>
       </label>
     </section>
   </aside>

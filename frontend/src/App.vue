@@ -3,11 +3,14 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 
 import LayerPanel from './components/LayerPanel.vue'
 import { createFacilitiesWmsLayer } from './services/ogcWms'
+import { createFacilitiesWmtsLayer } from './services/ogcWmts'
 import { createBaseMapLayers } from './services/baseMaps'
 import type { BaseMapType } from './services/baseMaps'
 
 import Map from 'ol/Map'    // 相当于 Cesium 的 Viewer
 import View from 'ol/View'  // 相当于 Cesium 的 Camera / Scene
+import type TileLayer from 'ol/layer/Tile'
+import type WMTS from 'ol/source/WMTS'
 
 import MousePosition from 'ol/control/MousePosition'
 import { createStringXY } from 'ol/coordinate'
@@ -42,6 +45,16 @@ function handleBaseMapChange(baseMap: BaseMapType) {
 const facilitiesWmsVisible = ref(true)
 // 创建设施点 WMS 图层
 const facilitiesWmsLayer = createFacilitiesWmsLayer()
+// 保存设施点 WMTS 图层的显示状态
+const facilitiesWmtsVisible = ref(false)
+// 保存异步创建的设施点 WMTS 图层
+let facilitiesWmtsLayer: TileLayer<WMTS> | null = null
+
+// 同步界面状态并切换设施点 WMTS 图层
+function handleFacilitiesWmtsVisibilityChange(visible: boolean) {
+  facilitiesWmtsVisible.value = visible
+  facilitiesWmtsLayer?.setVisible(visible)
+}
 // 同步界面状态并切换设施点 WMS 图层
 function handleFacilitiesVisibilityChange(visible: boolean) {
   facilitiesWmsVisible.value = visible
@@ -49,7 +62,7 @@ function handleFacilitiesVisibilityChange(visible: boolean) {
 }
 
 // Vue 组件挂载后初始化地图
-onMounted(() => {
+onMounted(async () => {
   if (!mapContainer.value || !coordinateContainer.value) return
 
   // 初始化地图
@@ -79,6 +92,11 @@ onMounted(() => {
     placeholder: '--',
     className: 'coordinate-value',
   }))
+
+  // 读取能力文档后，将设施点 WMTS 图层加入地图
+  facilitiesWmtsLayer = await createFacilitiesWmtsLayer()
+  facilitiesWmtsLayer.setVisible(facilitiesWmtsVisible.value)
+  map.addLayer(facilitiesWmtsLayer)
 })
 
 // 组件卸载时解除地图挂载
@@ -106,8 +124,10 @@ onBeforeUnmount(() => {
     <LayerPanel
       :selected-base-map="selectedBaseMap"
       :facilities-visible="facilitiesWmsVisible"
+      :facilities-wmts-visible="facilitiesWmtsVisible"
       @base-map-change="handleBaseMapChange"
       @visibility-change="handleFacilitiesVisibilityChange"
+      @wmts-visibility-change="handleFacilitiesWmtsVisibilityChange"
     />
   </div>
 </template>

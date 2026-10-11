@@ -151,3 +151,26 @@ http://localhost:18080/geoserver/ogc_lab/wfs?service=WFS&request=GetCapabilities
 ```text
 http://localhost:18080/geoserver/ogc_lab/ows?service=WFS&version=2.0.0&request=GetFeature&typeNames=ogc_lab:facilities&outputFormat=application/json
 ```
+
+## WMTS 瓦片服务
+
+本项目通过 GeoServer 内置的 GeoWebCache 提供 WMTS 服务。
+
+WMTS GetCapabilities：
+
+```text
+http://localhost:18080/geoserver/gwc/service/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0
+```
+
+当前 `ogc_lab:facilities` 使用：
+
+```text
+TileMatrixSet: EPSG:900913
+Style: point
+Format: image/png
+RequestEncoding: KVP
+```
+
+`EPSG:900913` 是 Web Mercator 的早期编号，与 OpenLayers 默认视图使用的 `EPSG:3857` 等价。前端读取能力文档后创建 WMTS 图层，并通过独立开关与 WMS 图层进行对比。
+
+详细请求参数、矩阵概念、透明瓦片说明和验收记录见 [`docs/wmts.md`](docs/wmts.md)。
