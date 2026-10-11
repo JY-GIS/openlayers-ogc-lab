@@ -5,12 +5,14 @@ defineProps<{
   selectedBaseMap: BaseMapType
   facilitiesVisible: boolean
   facilitiesWmtsVisible: boolean
+  wfsVisible: boolean
 }>()
 
 const emit = defineEmits<{
   'base-map-change': [baseMap: BaseMapType]
   'visibility-change': [visible: boolean]
   'wmts-visibility-change': [visible: boolean]
+  'wfs-visibility-change': [visible: boolean]
 }>()
 
 // 将用户选择的底图通知父组件
@@ -28,6 +30,12 @@ function handleVisibilityChange(event: Event) {
 function handleWmtsVisibilityChange(event: Event) {
   const checkbox = event.target as HTMLInputElement
   emit('wmts-visibility-change', checkbox.checked)
+}
+
+// 将 WFS 复选框的新状态通知父组件
+function handleWfsVisibilityChange(event: Event) {
+  const checkbox = event.target as HTMLInputElement
+  emit('wfs-visibility-change', checkbox.checked)
 }
 
 </script>
@@ -78,6 +86,15 @@ function handleWmtsVisibilityChange(event: Event) {
         >
         <span>WMTS 设施点</span>
       </label>
+
+      <label class="layer-item">
+        <input
+          type="checkbox"
+          :checked="wfsVisible"
+          @change="handleWfsVisibilityChange"
+        >
+        <span>WFS 点线面</span>
+        </label>
     </section>
   </aside>
 </template>

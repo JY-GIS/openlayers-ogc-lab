@@ -174,3 +174,17 @@ RequestEncoding: KVP
 `EPSG:900913` 是 Web Mercator 的早期编号，与 OpenLayers 默认视图使用的 `EPSG:3857` 等价。前端读取能力文档后创建 WMTS 图层，并通过独立开关与 WMS 图层进行对比。
 
 详细请求参数、矩阵概念、透明瓦片说明和验收记录见 [`docs/wmts.md`](docs/wmts.md)。
+
+## WFS 要素查询
+
+本项目通过 WFS 2.0.0 获取设施点、道路和服务范围面的 GeoJSON，并由 OpenLayers 在浏览器端绘制矢量要素。
+
+当前 WFS 查询具备：
+
+- 使用 `BBOX` 按地图当前范围请求点、线、面数据；
+- 将服务端 `EPSG:4326` 数据转换到地图使用的 `EPSG:3857`；
+- 使用不同客户端样式绘制 Point、LineString 和 Polygon；
+- 点击选择要素并显示编号、名称、类型和几何类型；
+- 显示加载中、成功、空结果和请求失败状态。
+
+详细请求示例、投影转换、前端调用链和验收方式见 [`docs/wfs.md`](docs/wfs.md)。

@@ -2,15 +2,22 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 
 import LayerPanel from './components/LayerPanel.vue'
+import FeatureInfoPanel from './components/FeatureInfoPanel.vue'
 import { createFacilitiesWmsLayer } from './services/ogcWms'
 import { createFacilitiesWmtsLayer } from './services/ogcWmts'
+import { createWfsLayers } from './services/ogcWfs'
 import { createBaseMapLayers } from './services/baseMaps'
 import type { BaseMapType } from './services/baseMaps'
+import type { WfsLoadState } from './services/ogcWfs'
 
 import Map from 'ol/Map'    // 相当于 Cesium 的 Viewer
 import View from 'ol/View'  // 相当于 Cesium 的 Camera / Scene
 import type TileLayer from 'ol/layer/Tile'
 import type WMTS from 'ol/source/WMTS'
+import type Feature from 'ol/Feature'
+import type Geometry from 'ol/geom/Geometry'
+import Select from 'ol/interaction/Select'
+import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style'
 
 import MousePosition from 'ol/control/MousePosition'
 import { createStringXY } from 'ol/coordinate'
@@ -21,6 +28,13 @@ import { fromLonLat } from 'ol/proj'
 // OpenLayers 自带的地图控件样式
 import 'ol/ol.css'
 
+interface SelectedFeatureInfo {
+  id: string
+  name: string
+  category: string
+  geometryType: string
+}
+
 // 获取模板中地图容器的 DOM 引用
 const mapContainer = ref<HTMLDivElement | null>(null)
 
@@ -29,7 +43,8 @@ const coordinateContainer = ref<HTMLDivElement | null>(null)
 
 // 保存 OpenLayers 地图实例
 let map: Map | null = null
-
+// 保存 WFS 要素选择交互，组件卸载时用于移除
+let selectInteraction: Select | null = null
 // 保存当前选择的底图
 const selectedBaseMap = ref<BaseMapType>('osm')
 // 创建标准地图和地形地图两个底图
@@ -41,15 +56,49 @@ function handleBaseMapChange(baseMap: BaseMapType) {
   baseMapLayers.topographicLayer.setVisible(baseMap === 'topographic')
 }
 
-// 保存设施点 WMS 图层的显示状态
 const facilitiesWmsVisible = ref(true)
-// 创建设施点 WMS 图层
 const facilitiesWmsLayer = createFacilitiesWmsLayer()
-// 保存设施点 WMTS 图层的显示状态
 const facilitiesWmtsVisible = ref(false)
 // 保存异步创建的设施点 WMTS 图层
 let facilitiesWmtsLayer: TileLayer<WMTS> | null = null
+const wfsVisible = ref(false)
+const selectedFeature = ref<SelectedFeatureInfo | null>(null)
 
+const wfsLoadStates = ref<WfsLoadState[]>([
+  { key: 'facilities', label: '设施点', status: 'idle' },
+  { key: 'roads', label: '道路', status: 'idle' },
+  { key: 'zones', label: '服务范围面', status: 'idle' },
+])
+
+// 更新指定 WFS 图层的加载状态
+function handleWfsLoadState(nextState: WfsLoadState) {
+  wfsLoadStates.value = wfsLoadStates.value.map(currentState =>
+    currentState.key === nextState.key ? nextState : currentState,
+  )
+}
+
+const selectedWfsStyle = new Style({
+  image: new CircleStyle({
+    radius: 9,
+    fill: new Fill({ color: '#ef4444' }),
+    stroke: new Stroke({ color: '#ffffff', width: 2 }),
+  }),
+  fill: new Fill({ color: 'rgb(239 68 68 / 22%)' }),
+  stroke: new Stroke({ color: '#ef4444', width: 3 }),
+})
+
+const wfsLayers = createWfsLayers(handleWfsLoadState)
+
+// 同步界面状态并切换全部 WFS 矢量图层
+function handleWfsVisibilityChange(visible: boolean) {
+  wfsVisible.value = visible
+  wfsLayers.forEach(layer => layer.setVisible(visible))
+
+  if (!visible) {
+    selectInteraction?.getFeatures().clear()
+    selectedFeature.value = null
+  }
+}
 // 同步界面状态并切换设施点 WMTS 图层
 function handleFacilitiesWmtsVisibilityChange(visible: boolean) {
   facilitiesWmtsVisible.value = visible
@@ -59,6 +108,22 @@ function handleFacilitiesWmtsVisibilityChange(visible: boolean) {
 function handleFacilitiesVisibilityChange(visible: boolean) {
   facilitiesWmsVisible.value = visible
   facilitiesWmsLayer.setVisible(visible)
+}
+
+// 从三种测试图层中读取对应的业务类型字段
+function getFeatureCategory(feature: Feature<Geometry>): string {
+  const category = feature.get('facility_type') ?? feature.get('road_level') ?? feature.get('zone_type')
+  return String(category ?? '--')
+}
+
+// 将 OpenLayers Feature 转换成属性面板需要的数据
+function createSelectedFeatureInfo(feature: Feature<Geometry>): SelectedFeatureInfo {
+  return {
+    id: String(feature.get('id') ?? feature.getId() ?? '--'),
+    name: String(feature.get('name') ?? '--'),
+    category: getFeatureCategory(feature),
+    geometryType: feature.getGeometry()?.getType() ?? '--',
+  }
 }
 
 // Vue 组件挂载后初始化地图
@@ -75,6 +140,7 @@ onMounted(async () => {
       baseMapLayers.osmLayer,
       baseMapLayers.topographicLayer,
       facilitiesWmsLayer,
+      ...wfsLayers,
     ],
 
     // 地图初始视图
@@ -83,6 +149,21 @@ onMounted(async () => {
       zoom: 12,
     }),
   })
+
+  // 创建只作用于 WFS 图层的点击选择交互
+  selectInteraction = new Select({
+    layers: wfsLayers,
+    hitTolerance: 6,
+    style: selectedWfsStyle,
+  })
+
+  // 将选中的 OpenLayers Feature 转换成属性面板数据
+  selectInteraction.on('select', event => {
+    const feature = event.selected[0] as Feature<Geometry> | undefined
+    selectedFeature.value = feature ? createSelectedFeatureInfo(feature) : null
+  })
+
+  map.addInteraction(selectInteraction)
 
   // 将鼠标所在位置转换成经纬度，并显示到页头
   map.addControl(new MousePosition({
@@ -101,6 +182,11 @@ onMounted(async () => {
 
 // 组件卸载时解除地图挂载
 onBeforeUnmount(() => {
+  if (map && selectInteraction) {
+    map.removeInteraction(selectInteraction)
+  }
+
+  selectInteraction = null
   map?.setTarget(undefined)
   map = null
 })
@@ -125,9 +211,16 @@ onBeforeUnmount(() => {
       :selected-base-map="selectedBaseMap"
       :facilities-visible="facilitiesWmsVisible"
       :facilities-wmts-visible="facilitiesWmtsVisible"
+      :wfs-visible="wfsVisible"
       @base-map-change="handleBaseMapChange"
       @visibility-change="handleFacilitiesVisibilityChange"
       @wmts-visibility-change="handleFacilitiesWmtsVisibilityChange"
+      @wfs-visibility-change="handleWfsVisibilityChange"
+    />
+    <FeatureInfoPanel
+      :visible="wfsVisible"
+      :selected-feature="selectedFeature"
+      :load-states="wfsLoadStates"
     />
   </div>
 </template>
