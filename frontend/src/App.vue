@@ -2,11 +2,14 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 
 import LayerPanel from './components/LayerPanel.vue'
+import FeatureEditor from './components/FeatureEditor.vue'
 import FeatureInfoPanel from './components/FeatureInfoPanel.vue'
 import { createFacilitiesWmsLayer } from './services/ogcWms'
 import { createFacilitiesWmtsLayer } from './services/ogcWmts'
 import { createWfsLayers } from './services/ogcWfs'
 import { createBaseMapLayers } from './services/baseMaps'
+import { insertFacility } from './services/ogcWfsTransaction'
+import type { FacilityInput } from './services/ogcWfsTransaction'
 import type { BaseMapType } from './services/baseMaps'
 import type { WfsLoadState } from './services/ogcWfs'
 
@@ -17,6 +20,9 @@ import type WMTS from 'ol/source/WMTS'
 import type Feature from 'ol/Feature'
 import type Geometry from 'ol/geom/Geometry'
 import Select from 'ol/interaction/Select'
+import Draw from 'ol/interaction/Draw'
+import VectorLayer from 'ol/layer/Vector'
+import VectorSource from 'ol/source/Vector'
 import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style'
 
 import MousePosition from 'ol/control/MousePosition'
@@ -35,6 +41,8 @@ interface SelectedFeatureInfo {
   geometryType: string
 }
 
+type EditorMode = 'idle' | 'drawing' | 'form' | 'submitting'
+
 // 获取模板中地图容器的 DOM 引用
 const mapContainer = ref<HTMLDivElement | null>(null)
 
@@ -45,6 +53,10 @@ const coordinateContainer = ref<HTMLDivElement | null>(null)
 let map: Map | null = null
 // 保存 WFS 要素选择交互，组件卸载时用于移除
 let selectInteraction: Select | null = null
+// 保存点绘制交互，绘制完成或取消时用于移除
+let drawInteraction: Draw | null = null
+// 保存当前等待提交的临时设施点
+let draftFeature: Feature<Geometry> | null = null
 // 保存当前选择的底图
 const selectedBaseMap = ref<BaseMapType>('osm')
 // 创建标准地图和地形地图两个底图
@@ -63,6 +75,22 @@ const facilitiesWmtsVisible = ref(false)
 let facilitiesWmtsLayer: TileLayer<WMTS> | null = null
 const wfsVisible = ref(false)
 const selectedFeature = ref<SelectedFeatureInfo | null>(null)
+
+const editorMode = ref<EditorMode>('idle')
+const transactionMessage = ref('')
+
+const draftSource = new VectorSource<Feature<Geometry>>()
+
+const draftLayer = new VectorLayer({
+  source: draftSource,
+  style: new Style({
+    image: new CircleStyle({
+      radius: 8,
+      fill: new Fill({ color: '#facc15' }),
+      stroke: new Stroke({ color: '#111827', width: 2 }),
+    }),
+  }),
+})
 
 const wfsLoadStates = ref<WfsLoadState[]>([
   { key: 'facilities', label: '设施点', status: 'idle' },
@@ -126,6 +154,75 @@ function createSelectedFeatureInfo(feature: Feature<Geometry>): SelectedFeatureI
   }
 }
 
+// 从地图中移除当前 Draw 交互
+function removeDrawInteraction() {
+  if (map && drawInteraction) {
+    map.removeInteraction(drawInteraction)
+  }
+
+  drawInteraction = null
+}
+
+// 开始在地图上绘制一个临时设施点
+function startFacilityInsert() {
+  if (!map) return
+
+  handleWfsVisibilityChange(true)
+  removeDrawInteraction()
+  draftSource.clear()
+  draftFeature = null
+  transactionMessage.value = ''
+
+  // 绘制时暂停选择，避免一次点击同时触发 Select
+  selectInteraction?.setActive(false)
+
+  drawInteraction = new Draw({ source: draftSource, type: 'Point' })
+
+  // 点绘制完成后保存临时 Feature，并进入属性填写阶段
+  drawInteraction.once('drawend', event => {
+    draftFeature = event.feature
+    editorMode.value = 'form'
+    removeDrawInteraction()
+    selectInteraction?.setActive(true)
+  })
+
+  map.addInteraction(drawInteraction)
+  editorMode.value = 'drawing'
+}
+
+// 取消当前新增操作并清除临时点
+function cancelFacilityInsert() {
+  removeDrawInteraction()
+  draftSource.clear()
+  draftFeature = null
+  editorMode.value = 'idle'
+  transactionMessage.value = ''
+  selectInteraction?.setActive(true)
+}
+
+// 提交 WFS-T Insert，并从服务器重新读取图层
+async function submitFacilityInsert(input: FacilityInput) {
+  if (!draftFeature) return
+
+  editorMode.value = 'submitting'
+  transactionMessage.value = ''
+
+  try {
+    const featureId = await insertFacility(draftFeature, input)
+
+    draftSource.clear()
+    draftFeature = null
+    editorMode.value = 'idle'
+    transactionMessage.value = `新增成功，服务端要素 ID : ${featureId}`
+
+    // refresh 会清除范围缓存并重新执行 WFS GetFeature
+    wfsLayers.forEach(layer => { layer.getSource()?.refresh() })
+  } catch (error) {
+    editorMode.value = 'form'
+    transactionMessage.value = error instanceof Error ? error.message : '设施点新增失败'
+  }
+}
+
 // Vue 组件挂载后初始化地图
 onMounted(async () => {
   if (!mapContainer.value || !coordinateContainer.value) return
@@ -141,6 +238,7 @@ onMounted(async () => {
       baseMapLayers.topographicLayer,
       facilitiesWmsLayer,
       ...wfsLayers,
+      draftLayer,
     ],
 
     // 地图初始视图
@@ -182,6 +280,8 @@ onMounted(async () => {
 
 // 组件卸载时解除地图挂载
 onBeforeUnmount(() => {
+  removeDrawInteraction()
+
   if (map && selectInteraction) {
     map.removeInteraction(selectInteraction)
   }
@@ -221,6 +321,13 @@ onBeforeUnmount(() => {
       :visible="wfsVisible"
       :selected-feature="selectedFeature"
       :load-states="wfsLoadStates"
+    />
+    <FeatureEditor
+      :mode="editorMode"
+      :message="transactionMessage"
+      @start="startFacilityInsert"
+      @cancel="cancelFacilityInsert"
+      @submit="submitFacilityInsert"
     />
   </div>
 </template>
