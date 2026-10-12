@@ -106,3 +106,88 @@ featureProjection: EPSG:3857
 - `geometry.getType()`：Point、LineString 或 Polygon。
 
 选中的点、线、面使用统一的红色高亮样式。点击空白位置或关闭 WFS 图层后清除选择结果。
+
+## WFS-T 设施点编辑
+
+本项目使用 WFS 2.0.0 Transaction 对 `ogc_lab:facilities` 执行新增、修改和删除。前端通过 OpenLayers `WFS.writeTransaction()` 生成事务 XML，再由 GeoServer 将事务写入 PostGIS。
+
+当前编辑范围只包含设施点，暂不允许编辑道路和服务范围面。
+
+### 事务入口与认证
+
+浏览器统一向 Vite 开发服务器的固定代理地址发送请求：
+
+```text
+POST /wfs-transaction
+```
+
+Vite 将请求转发到：
+
+```text
+http://localhost:18080/geoserver/ogc_lab/wfs
+```
+
+代理从仓库根目录 `.env` 读取以下配置，并在服务端代理阶段添加 HTTP Basic Authentication 请求头：
+
+```dotenv
+WFS_EDITOR_USER=ogc_editor
+WFS_EDITOR_PASSWORD=本机设置的编辑用户密码
+```
+
+账号密码不会打包到浏览器 JavaScript 中。修改 `.env` 后必须重新启动 Vite，开发服务器才会读取新配置。
+
+GeoServer 中需要存在已启用的 `ogc_editor` 用户，并为其分配 `ROLE_OGC_EDITOR`。该角色只需要具备 `ogc_lab:facilities` 的写权限，不应使用管理员账号作为日常编辑账号。
+
+### 事务公共参数
+
+三个事务操作使用相同的 WFS 配置：
+
+| 参数 | 值 | 用途 |
+| --- | --- | --- |
+| `version` | `2.0.0` | WFS 协议版本 |
+| `featureNS` | `http://localhost/ogc_lab` | 工作区命名空间 URI |
+| `featurePrefix` | `ogc_lab` | 工作区前缀 |
+| `featureType` | `facilities` | 编辑的要素类型 |
+| `srsName` | `CRS:84` | 按经度、纬度顺序写入点坐标 |
+
+OpenLayers 地图上的临时点使用 `EPSG:3857`。提交新增或修改前，前端会克隆几何并转换为 `CRS:84`，避免直接改变地图上的原始 Feature。
+
+### 新增设施点
+
+新增流程：
+
+```text
+点击“新增设施点”
+  → Draw 绘制临时点
+  → 填写名称、设施类型和描述
+  → WFS Transaction Insert
+  → GeoServer 写入 PostGIS
+  → 读取 InsertResults 中的 Feature ID
+  → refresh() 重新加载 WFS 图层
+```
+
+事务响应中的 `totalInserted` 必须为 `1`，否则前端将本次操作视为失败。
+
+### 修改设施点
+
+只有从 `facilities` 图层选中的 Point 要素可以进入修改状态。前端克隆服务器要素到草稿图层，通过 `Modify` 交互调整位置，并允许同时修改属性。
+
+提交时使用服务器返回的 Feature ID（例如 `facilities.6`）生成 WFS Transaction Update。事务响应中的 `totalUpdated` 必须为 `1`。提交成功后清除草稿和选择状态，并重新加载服务器数据。
+
+使用克隆要素可以保证：在 GeoServer 确认事务成功之前，WFS 图层中的原始要素不会被直接改变。
+
+### 删除设施点
+
+选中设施点后可以执行删除。前端先显示确认对话框，用户确认后使用该要素的 Feature ID 生成 WFS Transaction Delete。
+
+删除流程：
+
+```text
+选择设施点
+  → 点击“删除选中设施点”
+  → 确认删除
+  → WFS Transaction Delete
+  → 检查 totalDeleted 是否为 1
+  → 清除选择状态
+  → refresh() 重新加载 WFS 图层
+```

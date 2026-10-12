@@ -143,3 +143,22 @@ export async function updateFacility(
         throw new Error('GeoServer 未确认修改设施点')
     }
 }
+
+// 根据服务端 Feature ID 删除一个设施点
+export async function deleteFacility(featureId: string): Promise<void> {
+    const deleteFeature = new Feature<Geometry>()
+    deleteFeature.setId(featureId)
+
+    const transactionNode = wfsFormat.writeTransaction(
+        [],
+        [],
+        [deleteFeature],
+        transactionOptions,
+    )
+
+    const transactionResponse = await submitTransaction(transactionNode)
+
+    if (transactionResponse.transactionSummary.totalDeleted !== 1) {
+        throw new Error('GeoServer 未确认删除设施点')
+    }
+}

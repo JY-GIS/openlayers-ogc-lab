@@ -8,7 +8,7 @@ import { createFacilitiesWmsLayer } from './services/ogcWms'
 import { createFacilitiesWmtsLayer } from './services/ogcWmts'
 import { createWfsLayers } from './services/ogcWfs'
 import { createBaseMapLayers } from './services/baseMaps'
-import { insertFacility, updateFacility } from './services/ogcWfsTransaction'
+import { deleteFacility, insertFacility, updateFacility } from './services/ogcWfsTransaction'
 import type { FacilityInput } from './services/ogcWfsTransaction'
 import type { BaseMapType } from './services/baseMaps'
 import type { WfsLoadState } from './services/ogcWfs'
@@ -49,6 +49,7 @@ type EditorMode =
   | 'submitting'
   | 'editing'
   | 'updating'
+  | 'deleting'
 
 // 获取模板中地图容器的 DOM 引用
 const mapContainer = ref<HTMLDivElement | null>(null)
@@ -292,6 +293,35 @@ async function submitFacilityInsert(input: FacilityInput) {
   }
 }
 
+// 删除当前选中的服务器设施点，并重新读取 WFS 图层
+async function submitFacilityDelete() {
+  const featureId = selectedWfsFeature?.getId()
+
+  if (!featureId || !selectedFacilityInput.value) return
+
+  const confirmed = window.confirm(`确定删除设施点“${selectedFacilityInput.value.name}”吗？`)
+
+  if (!confirmed) return
+
+  editorMode.value = 'deleting'
+  transactionMessage.value = ''
+
+  try {
+    await deleteFacility(String(featureId))
+
+    clearSelectedWfsFeature()
+    editorMode.value = 'idle'
+    transactionMessage.value = `删除成功：${featureId}`
+
+    wfsLayers.forEach(layer => {
+      layer.getSource()?.refresh()
+    })
+  } catch (error) {
+    editorMode.value = 'idle'
+    transactionMessage.value = error instanceof Error ? error.message : '设施点删除失败'
+  }
+}
+
 // 提交 WFS-T Update，并重新读取服务器数据
 async function submitFacilityUpdate(input: FacilityInput) {
   const featureId = selectedWfsFeature?.getId()
@@ -441,6 +471,7 @@ onBeforeUnmount(() => {
       :selected-facility="selectedFacilityInput"
       @start="startFacilityInsert"
       @edit="startFacilityUpdate"
+      @delete="submitFacilityDelete"
       @cancel="cancelFacilityEditing"
       @submit="submitFacilityInsert"
       @update="submitFacilityUpdate"

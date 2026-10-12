@@ -10,6 +10,7 @@ type EditorMode =
   | 'submitting'
   | 'editing'
   | 'updating'
+  | 'deleting'
 
 const props = defineProps<{
   mode: EditorMode
@@ -20,6 +21,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   start: []
   edit: []
+  delete: []
   cancel: []
   submit: [input: FacilityInput]
   update: [input: FacilityInput]
@@ -73,10 +75,11 @@ function cancelEditing() {
   <aside class="editor-panel">
     <h3>WFS-T 设施点编辑</h3>
 
-    <div v-if="mode === 'idle'" class="idle-actions">
+    <div v-if="mode === 'idle' || mode === 'deleting'" class="idle-actions">
       <button
           type="button"
           class="primary-button"
+          :disabled="mode === 'deleting'"
           @click="startDrawing"
       >
         新增设施点
@@ -85,10 +88,19 @@ function cancelEditing() {
       <button
         type="button"
         :class="selectedFacility ? 'primary-button' : 'secondary-button'"
-        :disabled="!selectedFacility"
+        :disabled="!selectedFacility || mode === 'deleting'"
         @click="startUpdating"
       >
         修改选中设施点
+      </button>
+
+      <button
+        type="button"
+        class="danger-button"
+        :disabled="!selectedFacility || mode === 'deleting'"
+        @click="emit('delete')"
+      >
+        {{ mode === 'deleting' ? '删除中...' : '删除选中设施点' }}
       </button>
     </div>
 
@@ -265,5 +277,20 @@ function cancelEditing() {
 .idle-actions {
   display: grid;
   gap: 8px;
+}
+
+.danger-button {
+  padding: 7px 10px;
+  color: #ffffff;
+  font: inherit;
+  background: #dc2626;
+  border: 1px solid #dc2626;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 </style>
