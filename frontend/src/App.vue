@@ -4,6 +4,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import LayerPanel from './components/LayerPanel.vue'
 import FeatureEditor from './components/FeatureEditor.vue'
 import FeatureInfoPanel from './components/FeatureInfoPanel.vue'
+import MeasurementPanel from './components/MeasurementPanel.vue'
 import { createFacilitiesWmsLayer } from './services/ogcWms'
 import { createFacilitiesWmtsLayer } from './services/ogcWmts'
 import { createWfsLayers } from './services/ogcWfs'
@@ -28,6 +29,8 @@ import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style'
 
 import MousePosition from 'ol/control/MousePosition'
 import { createStringXY } from 'ol/coordinate'
+import LineString from 'ol/geom/LineString'
+import { getLength as getSphereLength } from 'ol/sphere'
 
 // 坐标转换
 import { fromLonLat } from 'ol/proj'
@@ -67,6 +70,13 @@ let selectInteraction: Select | null = null
 let drawInteraction: Draw | null = null
 // 保存几何修改交互，提交或取消时用于移除
 let modifyInteraction: Modify | null = null
+
+type MeasurementMode = 'idle' | 'distance'
+
+let measurementDrawInteraction: Draw | null = null
+const measurementMode = ref<MeasurementMode>('idle')
+const measurementResult = ref('')
+
 // 保存当前从 WFS 选中的原始要素
 let selectedWfsFeature: Feature<Geometry> | null = null
 // 保存当前等待提交的临时设施点
@@ -125,6 +135,21 @@ const draftLayer = new VectorLayer({
 
     return draftPointStyle
   },
+})
+
+// 测量要素使用独立数据源，不参与 WFS-T
+const measurementSource = new VectorSource<Feature<Geometry>>()
+
+const measurementStyle = new Style({
+  stroke: new Stroke({
+    color: '#2563eb',
+    width: 4,
+  }),
+})
+
+const measurementLayer = new VectorLayer({
+  source: measurementSource,
+  style: measurementStyle,
 })
 
 const wfsLoadStates = ref<WfsLoadState[]>([
@@ -226,6 +251,19 @@ function clearSelectedWfsFeature() {
   selectedGeometryLayer.value = null
 }
 
+// 使用球面算法计算长度，并根据大小选择米或千米
+function formatLength(line: LineString): string {
+  if (!map) return '--'
+
+  const length = getSphereLength(line, {
+    projection: map.getView().getProjection(),
+  })
+
+  if (length >= 1000) return `${(length / 1000).toFixed(2)} km`
+
+  return `${length.toFixed(2)} m`
+}
+
 // 从地图中移除当前 Draw 交互
 function removeDrawInteraction() {
   if (map && drawInteraction) {
@@ -233,6 +271,60 @@ function removeDrawInteraction() {
   }
 
   drawInteraction = null
+}
+
+// 放弃未完成的测量草图，并从地图移除测量 Draw
+function cancelMeasurementDrawing() {
+  if (measurementDrawInteraction) {
+    measurementDrawInteraction.abortDrawing()
+    map?.removeInteraction(measurementDrawInteraction)
+  }
+
+  measurementDrawInteraction = null
+  measurementMode.value = 'idle'
+
+  // 测量结束后恢复 WFS 要素选择
+  selectInteraction?.setActive(true)
+}
+
+// 开始绘制测距线
+function startDistanceMeasurement() {
+  if (!map || editorMode.value !== 'idle') return
+
+  // 保证同一时刻只有一个测量 Draw
+  cancelMeasurementDrawing()
+
+  // 测量点击不应同时触发 WFS Select
+  selectInteraction?.setActive(false)
+
+  const interaction = new Draw({
+    source: measurementSource,
+    type: 'LineString',
+  })
+
+  measurementDrawInteraction = interaction
+  measurementMode.value = 'distance'
+  measurementResult.value = ''
+
+  interaction.once('drawend', event => {
+    const geometry = event.feature.getGeometry()
+
+    if (geometry instanceof LineString) {
+      measurementResult.value = formatLength(geometry)
+    }
+
+    // 当前版本每次点击按钮只绘制一条测量线
+    map?.removeInteraction(interaction)
+
+    if (measurementDrawInteraction === interaction) {
+      measurementDrawInteraction = null
+    }
+
+    measurementMode.value = 'idle'
+    selectInteraction?.setActive(true)
+  })
+
+  map.addInteraction(interaction)
 }
 
 // 从地图中移除当前 Modify 交互
@@ -248,6 +340,7 @@ function removeModifyInteraction() {
 function startFacilityInsert() {
   if (!map) return
 
+  cancelMeasurementDrawing()
   handleWfsVisibilityChange(true)
   removeDrawInteraction()
   removeModifyInteraction()
@@ -291,6 +384,7 @@ function startFacilityUpdate() {
     return
   }
 
+  cancelMeasurementDrawing()
   removeDrawInteraction()
   removeModifyInteraction()
   draftSource.clear()
@@ -320,6 +414,7 @@ function startGeometryUpdate() {
     return
   }
 
+  cancelMeasurementDrawing()
   removeDrawInteraction()
   removeModifyInteraction()
   draftSource.clear()
@@ -472,6 +567,7 @@ onMounted(async () => {
       facilitiesWmsLayer,
       ...wfsLayers,
       draftLayer,
+      measurementLayer,
     ],
 
     // 地图初始视图
@@ -530,6 +626,7 @@ onMounted(async () => {
 
 // 组件卸载时解除地图挂载
 onBeforeUnmount(() => {
+  cancelMeasurementDrawing()
   removeDrawInteraction()
   removeModifyInteraction()
 
@@ -567,6 +664,12 @@ onBeforeUnmount(() => {
       @visibility-change="handleFacilitiesVisibilityChange"
       @wmts-visibility-change="handleFacilitiesWmtsVisibilityChange"
       @wfs-visibility-change="handleWfsVisibilityChange"
+    />
+    <MeasurementPanel
+      :disabled="editorMode !== 'idle'"
+      :active="measurementMode === 'distance'"
+      :result="measurementResult"
+      @start-distance="startDistanceMeasurement"
     />
     <FeatureInfoPanel
       :visible="wfsVisible"
