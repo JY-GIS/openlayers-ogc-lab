@@ -1,12 +1,13 @@
 <script setup lang="ts">
 defineProps<{
   disabled: boolean
-  active: boolean
+  mode: 'idle' | 'distance' | 'area'
   result: string
 }>()
 
 defineEmits<{
   'start-distance': []
+  'start-area': []
 }>()
 </script>
 
@@ -14,17 +15,30 @@ defineEmits<{
   <aside class="measurement-panel">
     <h3>地图测量</h3>
 
-    <button
-      type="button"
-      class="primary-button"
-      :disabled="disabled || active"
-      @click="$emit('start-distance')"
-    >
-      {{ active ? '测距中...' : '测距' }}
-    </button>
+    <div class="measurement-actions">
+      <button
+        type="button"
+        class="primary-button"
+        :disabled="disabled || mode !== 'idle'"
+        @click="$emit('start-distance')"
+      >
+        {{ mode === 'distance' ? '测距中...' : '测距' }}
+      </button>
 
-    <p v-if="active" class="measurement-tip">
-      单击添加线段顶点，双击结束绘制
+      <button
+        type="button"
+        class="primary-button"
+        :disabled="disabled || mode !== 'idle'"
+        @click="$emit('start-area')"
+      >
+        {{ mode === 'area' ? '测面积中...' : '测面积' }}
+      </button>
+    </div>
+
+    <p v-if="mode !== 'idle'" class="measurement-tip">
+      {{ mode === 'distance'
+        ? '单击添加线段顶点，双击结束绘制'
+        : '单击添加多边形顶点，双击结束绘制' }}
     </p>
 
     <p v-if="result" class="measurement-result">
@@ -50,6 +64,12 @@ defineEmits<{
 .measurement-panel h3 {
   margin: 0 0 12px;
   font-size: 15px;
+}
+
+.measurement-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 .primary-button {

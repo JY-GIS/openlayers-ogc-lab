@@ -30,7 +30,8 @@ import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style'
 import MousePosition from 'ol/control/MousePosition'
 import { createStringXY } from 'ol/coordinate'
 import LineString from 'ol/geom/LineString'
-import { getLength as getSphereLength } from 'ol/sphere'
+import Polygon from 'ol/geom/Polygon'
+import { getArea as getSphereArea, getLength as getSphereLength } from 'ol/sphere'
 
 // 坐标转换
 import { fromLonLat } from 'ol/proj'
@@ -71,7 +72,8 @@ let drawInteraction: Draw | null = null
 // 保存几何修改交互，提交或取消时用于移除
 let modifyInteraction: Modify | null = null
 
-type MeasurementMode = 'idle' | 'distance'
+type MeasurementMode = 'idle' | 'distance' | 'area'
+type ActiveMeasurementMode = Exclude<MeasurementMode, 'idle'>
 
 let measurementDrawInteraction: Draw | null = null
 const measurementMode = ref<MeasurementMode>('idle')
@@ -141,6 +143,9 @@ const draftLayer = new VectorLayer({
 const measurementSource = new VectorSource<Feature<Geometry>>()
 
 const measurementStyle = new Style({
+  fill: new Fill({
+    color: 'rgb(37 99 235 / 18%)',
+  }),
   stroke: new Stroke({
     color: '#2563eb',
     width: 4,
@@ -264,6 +269,19 @@ function formatLength(line: LineString): string {
   return `${length.toFixed(2)} m`
 }
 
+// 使用球面算法计算面积，并根据大小选择平方米或平方千米
+function formatArea(polygon: Polygon): string {
+  if (!map) return '--'
+
+  const area = getSphereArea(polygon, {
+    projection: map.getView().getProjection(),
+  })
+
+  if (area >= 1_000_000) return `${(area / 1_000_000).toFixed(2)} km²`
+
+  return `${area.toFixed(2)} m²`
+}
+
 // 从地图中移除当前 Draw 交互
 function removeDrawInteraction() {
   if (map && drawInteraction) {
@@ -287,8 +305,8 @@ function cancelMeasurementDrawing() {
   selectInteraction?.setActive(true)
 }
 
-// 开始绘制测距线
-function startDistanceMeasurement() {
+// 根据测量模式创建线或面的 Draw 交互
+function startMeasurement(mode: ActiveMeasurementMode) {
   if (!map || editorMode.value !== 'idle') return
 
   // 保证同一时刻只有一个测量 Draw
@@ -299,21 +317,25 @@ function startDistanceMeasurement() {
 
   const interaction = new Draw({
     source: measurementSource,
-    type: 'LineString',
+    type: mode === 'distance' ? 'LineString' : 'Polygon',
   })
 
   measurementDrawInteraction = interaction
-  measurementMode.value = 'distance'
+  measurementMode.value = mode
   measurementResult.value = ''
 
   interaction.once('drawend', event => {
     const geometry = event.feature.getGeometry()
 
-    if (geometry instanceof LineString) {
+    if (mode === 'distance' && geometry instanceof LineString) {
       measurementResult.value = formatLength(geometry)
     }
 
-    // 当前版本每次点击按钮只绘制一条测量线
+    if (mode === 'area' && geometry instanceof Polygon) {
+      measurementResult.value = formatArea(geometry)
+    }
+
+    // 当前版本每次点击按钮只绘制一个测量图形
     map?.removeInteraction(interaction)
 
     if (measurementDrawInteraction === interaction) {
@@ -325,6 +347,14 @@ function startDistanceMeasurement() {
   })
 
   map.addInteraction(interaction)
+}
+
+function startDistanceMeasurement() {
+  startMeasurement('distance')
+}
+
+function startAreaMeasurement() {
+  startMeasurement('area')
 }
 
 // 从地图中移除当前 Modify 交互
@@ -667,9 +697,10 @@ onBeforeUnmount(() => {
     />
     <MeasurementPanel
       :disabled="editorMode !== 'idle'"
-      :active="measurementMode === 'distance'"
+      :mode="measurementMode"
       :result="measurementResult"
       @start-distance="startDistanceMeasurement"
+      @start-area="startAreaMeasurement"
     />
     <FeatureInfoPanel
       :visible="wfsVisible"
