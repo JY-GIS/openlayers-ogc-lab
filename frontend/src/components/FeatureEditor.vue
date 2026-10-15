@@ -11,20 +11,25 @@ type EditorMode =
   | 'editing'
   | 'updating'
   | 'deleting'
+  | 'geometry-editing'
+  | 'geometry-updating'
 
 const props = defineProps<{
   mode: EditorMode
   message: string
   selectedFacility: FacilityInput | null
+  selectedGeometryLabel: string | null
 }>()
 
 const emit = defineEmits<{
   start: []
   edit: []
+  editGeometry: []
   delete: []
   cancel: []
   submit: [input: FacilityInput]
   update: [input: FacilityInput]
+  submitGeometry: []
 }>()
 
 const name = ref('')
@@ -96,6 +101,15 @@ function cancelEditing() {
 
       <button
         type="button"
+        :class="selectedGeometryLabel ? 'primary-button' : 'secondary-button'"
+        :disabled="!selectedGeometryLabel || mode === 'deleting'"
+        @click="emit('editGeometry')"
+      >
+        {{ selectedGeometryLabel ? `修改${selectedGeometryLabel}` : '修改选中线面' }}
+      </button>
+
+      <button
+        type="button"
         class="danger-button"
         :disabled="!selectedFacility || mode === 'deleting'"
         @click="emit('delete')"
@@ -116,6 +130,32 @@ function cancelEditing() {
       >
         取消绘制
       </button>
+    </div>
+
+    <div v-else-if="mode === 'geometry-editing' || mode === 'geometry-updating'">
+      <p class="editor-tip">
+        拖动黄色线或面的顶点修改形状。当前只修改浏览器中的草稿。
+      </p>
+
+      <div class="editor-actions">
+        <button
+          type="button"
+          class="primary-button"
+          :disabled="mode === 'geometry-updating'"
+          @click="emit('submitGeometry')"
+        >
+          {{ mode === 'geometry-updating' ? '提交中...' : '提交几何修改' }}
+        </button>
+
+        <button
+          type="button"
+          class="secondary-button"
+          :disabled="mode === 'geometry-updating'"
+          @click="cancelEditing"
+        >
+          取消
+        </button>
+      </div>
     </div>
 
     <form

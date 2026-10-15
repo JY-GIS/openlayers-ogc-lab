@@ -15,6 +15,19 @@ export interface FacilityInput {
     description: string
 }
 
+export type EditableGeometryLayer = 'roads' | 'zones'
+
+const geometryUpdateConfigs = {
+    roads: {
+        featureType: 'demo_roads',
+        geometryType: 'LineString',
+    },
+    zones: {
+        featureType: 'demo_zones',
+        geometryType: 'Polygon',
+    },
+} as const
+
 const wfsFormat = new WFS({
     version: '2.0.0',
     gmlFormat: new GML32(),
@@ -27,6 +40,18 @@ const transactionOptions: WriteTransactionOptions = {
     srsName: TRANSACTION_PROJECTION,
     version: '2.0.0',
     nativeElements: [],
+}
+
+// 根据线面图层生成对应的 WFS-T 参数
+function createGeometryTransactionOptions(
+    layer: EditableGeometryLayer,
+): WriteTransactionOptions {
+    const config = geometryUpdateConfigs[layer]
+
+    return {
+        ...transactionOptions,
+        featureType: config.featureType,
+    }
 }
 
 // 将地图设施点转换成符合 facilities Schema 的事务要素
@@ -57,6 +82,32 @@ function createFacilityTransactionFeature(
     if (featureId) {
         transactionFeature.setId(featureId)
     }
+
+    return transactionFeature
+}
+
+// 将地图中的线面草稿转换成只更新 geom 字段的事务要素
+function createGeometryUpdateFeature(
+    mapFeature: Feature<Geometry>,
+    featureId: string,
+    layer: EditableGeometryLayer,
+): Feature<Geometry> {
+    const config = geometryUpdateConfigs[layer]
+    const mapGeometry = mapFeature.getGeometry()
+
+    if (!mapGeometry || mapGeometry.getType() !== config.geometryType) {
+        throw new Error(`要素几何类型必须是 ${config.geometryType}`)
+    }
+
+    const dataGeometry = mapGeometry.clone()
+    dataGeometry.transform('EPSG:3857', TRANSACTION_PROJECTION)
+
+    const transactionFeature = new Feature<Geometry>({
+        geom: dataGeometry,
+    })
+
+    transactionFeature.setGeometryName('geom')
+    transactionFeature.setId(featureId)
 
     return transactionFeature
 }
@@ -141,6 +192,32 @@ export async function updateFacility(
 
     if (transactionResponse.transactionSummary.totalUpdated !== 1) {
         throw new Error('GeoServer 未确认修改设施点')
+    }
+}
+
+// 提交道路或服务范围面的几何修改
+export async function updateGeometry(
+    mapFeature: Feature<Geometry>,
+    featureId: string,
+    layer: EditableGeometryLayer,
+): Promise<void> {
+    const updateFeature = createGeometryUpdateFeature(
+        mapFeature,
+        featureId,
+        layer,
+    )
+
+    const transactionNode = wfsFormat.writeTransaction(
+        [],
+        [updateFeature],
+        [],
+        createGeometryTransactionOptions(layer),
+    )
+
+    const transactionResponse = await submitTransaction(transactionNode)
+
+    if (transactionResponse.transactionSummary.totalUpdated !== 1) {
+        throw new Error('GeoServer 未确认线面几何修改')
     }
 }
 

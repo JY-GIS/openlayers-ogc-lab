@@ -8,8 +8,8 @@ import { createFacilitiesWmsLayer } from './services/ogcWms'
 import { createFacilitiesWmtsLayer } from './services/ogcWmts'
 import { createWfsLayers } from './services/ogcWfs'
 import { createBaseMapLayers } from './services/baseMaps'
-import { deleteFacility, insertFacility, updateFacility } from './services/ogcWfsTransaction'
-import type { FacilityInput } from './services/ogcWfsTransaction'
+import { deleteFacility, insertFacility, updateFacility, updateGeometry } from './services/ogcWfsTransaction'
+import type { EditableGeometryLayer, FacilityInput } from './services/ogcWfsTransaction'
 import type { BaseMapType } from './services/baseMaps'
 import type { WfsLoadState } from './services/ogcWfs'
 
@@ -50,6 +50,8 @@ type EditorMode =
   | 'editing'
   | 'updating'
   | 'deleting'
+  | 'geometry-editing'
+  | 'geometry-updating'
 
 // 获取模板中地图容器的 DOM 引用
 const mapContainer = ref<HTMLDivElement | null>(null)
@@ -88,21 +90,41 @@ let facilitiesWmtsLayer: TileLayer<WMTS> | null = null
 const wfsVisible = ref(false)
 const selectedFeature = ref<SelectedFeatureInfo | null>(null)
 const selectedFacilityInput = ref<FacilityInput | null>(null)
+const selectedGeometryLabel = ref<string | null>(null)
+const selectedGeometryLayer = ref<EditableGeometryLayer | null>(null)
 
 const editorMode = ref<EditorMode>('idle')
 const transactionMessage = ref('')
 
 const draftSource = new VectorSource<Feature<Geometry>>()
 
+const draftPointStyle = new Style({
+  image: new CircleStyle({
+    radius: 8,
+    fill: new Fill({ color: '#facc15' }),
+    stroke: new Stroke({ color: '#111827', width: 2 }),
+  }),
+})
+
+const draftLineStyle = new Style({
+  stroke: new Stroke({ color: '#facc15', width: 5 }),
+})
+
+const draftPolygonStyle = new Style({
+  fill: new Fill({ color: 'rgb(250 204 21 / 25%)' }),
+  stroke: new Stroke({ color: '#facc15', width: 4 }),
+})
+
 const draftLayer = new VectorLayer({
   source: draftSource,
-  style: new Style({
-    image: new CircleStyle({
-      radius: 8,
-      fill: new Fill({ color: '#facc15' }),
-      stroke: new Stroke({ color: '#111827', width: 2 }),
-    }),
-  }),
+  style: feature => {
+    const geometryType = feature.getGeometry()?.getType()
+
+    if (geometryType === 'LineString') return draftLineStyle
+    if (geometryType === 'Polygon') return draftPolygonStyle
+
+    return draftPointStyle
+  },
 })
 
 const wfsLoadStates = ref<WfsLoadState[]>([
@@ -173,6 +195,26 @@ function isFacilityFeature(feature: Feature<Geometry>): boolean {
   return featureId.startsWith('facilities.') && feature.getGeometry()?.getType() === 'Point'
 }
 
+// 识别允许修改形状的道路和服务范围面
+function getEditableGeometryTarget(feature: Feature<Geometry>): {
+  layer: EditableGeometryLayer
+  label: string
+} | null {
+  const featureId = String(feature.getId() ?? '')
+  const geometryType = feature.getGeometry()?.getType()
+  const featureName = String(feature.get('name') ?? '未命名要素')
+
+  if (featureId.startsWith('demo_roads.') && geometryType === 'LineString') {
+    return { layer: 'roads', label: `道路“${featureName}”` }
+  }
+
+  if (featureId.startsWith('demo_zones.') && geometryType === 'Polygon') {
+    return { layer: 'zones', label: `服务范围面“${featureName}”` }
+  }
+
+  return null
+}
+
 // 恢复原要素样式，并清除当前 WFS 要素选择及属性状态
 function clearSelectedWfsFeature() {
   selectedWfsFeature?.setStyle(undefined)
@@ -180,6 +222,8 @@ function clearSelectedWfsFeature() {
   selectedWfsFeature = null
   selectedFeature.value = null
   selectedFacilityInput.value = null
+  selectedGeometryLabel.value = null
+  selectedGeometryLayer.value = null
 }
 
 // 从地图中移除当前 Draw 交互
@@ -268,6 +312,63 @@ function startFacilityUpdate() {
 
   map.addInteraction(modifyInteraction)
   editorMode.value = 'editing'
+}
+
+// 将选中的道路或服务范围面复制到草稿图层，并允许拖动顶点
+function startGeometryUpdate() {
+  if (!map || !selectedWfsFeature || !selectedGeometryLabel.value) {
+    return
+  }
+
+  removeDrawInteraction()
+  removeModifyInteraction()
+  draftSource.clear()
+  transactionMessage.value = ''
+
+  draftFeature = selectedWfsFeature.clone()
+  draftFeature.setStyle(undefined)
+  draftSource.addFeature(draftFeature)
+
+  selectInteraction?.getFeatures().clear()
+  selectedWfsFeature.setStyle([])
+  selectInteraction?.setActive(false)
+
+  modifyInteraction = new Modify({ source: draftSource })
+  map.addInteraction(modifyInteraction)
+  editorMode.value = 'geometry-editing'
+}
+
+// 提交道路或服务范围面的 WFS-T Update，并重新读取服务器数据
+async function submitGeometryUpdate() {
+  const featureId = selectedWfsFeature?.getId()
+  const geometryLayer = selectedGeometryLayer.value
+  const geometryLabel = selectedGeometryLabel.value
+
+  if (!draftFeature || !featureId || !geometryLayer) return
+
+  editorMode.value = 'geometry-updating'
+  transactionMessage.value = ''
+
+  try {
+    await updateGeometry(draftFeature, String(featureId), geometryLayer)
+
+    removeModifyInteraction()
+    draftSource.clear()
+    draftFeature = null
+    clearSelectedWfsFeature()
+    editorMode.value = 'idle'
+    transactionMessage.value = `几何修改成功：${geometryLabel ?? featureId}`
+    selectInteraction?.setActive(true)
+
+    wfsLayers.forEach(layer => {
+      layer.getSource()?.refresh()
+    })
+  } catch (error) {
+    editorMode.value = 'geometry-editing'
+    transactionMessage.value = error instanceof Error
+      ? error.message
+      : '线面几何修改失败'
+  }
 }
 
 // 提交 WFS-T Insert，并从服务器重新读取图层
@@ -401,6 +502,13 @@ onMounted(async () => {
           description: String(feature.get('description') ?? ''),
         }
       : null
+
+    const geometryTarget = feature
+      ? getEditableGeometryTarget(feature)
+      : null
+
+    selectedGeometryLabel.value = geometryTarget?.label ?? null
+    selectedGeometryLayer.value = geometryTarget?.layer ?? null
   })
 
   map.addInteraction(selectInteraction)
@@ -469,12 +577,15 @@ onBeforeUnmount(() => {
       :mode="editorMode"
       :message="transactionMessage"
       :selected-facility="selectedFacilityInput"
+      :selected-geometry-label="selectedGeometryLabel"
       @start="startFacilityInsert"
       @edit="startFacilityUpdate"
+      @edit-geometry="startGeometryUpdate"
       @delete="submitFacilityDelete"
       @cancel="cancelFacilityEditing"
       @submit="submitFacilityInsert"
       @update="submitFacilityUpdate"
+      @submit-geometry="submitGeometryUpdate"
     />
   </div>
 </template>

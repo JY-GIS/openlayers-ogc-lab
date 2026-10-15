@@ -107,11 +107,11 @@ featureProjection: EPSG:3857
 
 选中的点、线、面使用统一的红色高亮样式。点击空白位置或关闭 WFS 图层后清除选择结果。
 
-## WFS-T 设施点编辑
+## WFS-T 要素编辑
 
-本项目使用 WFS 2.0.0 Transaction 对 `ogc_lab:facilities` 执行新增、修改和删除。前端通过 OpenLayers `WFS.writeTransaction()` 生成事务 XML，再由 GeoServer 将事务写入 PostGIS。
+本项目使用 WFS 2.0.0 Transaction 对 `ogc_lab:facilities` 执行新增、修改和删除，并对 `ogc_lab:demo_roads`、`ogc_lab:demo_zones` 执行几何修改。前端通过 OpenLayers `WFS.writeTransaction()` 生成事务 XML，再由 GeoServer 将事务写入 PostGIS。
 
-当前编辑范围只包含设施点，暂不允许编辑道路和服务范围面。
+当前道路和服务范围面只修改几何形状，不修改名称、道路等级或区域类型等属性。
 
 ### 事务入口与认证
 
@@ -136,7 +136,7 @@ WFS_EDITOR_PASSWORD=本机设置的编辑用户密码
 
 账号密码不会打包到浏览器 JavaScript 中。修改 `.env` 后必须重新启动 Vite，开发服务器才会读取新配置。
 
-GeoServer 中需要存在已启用的 `ogc_editor` 用户，并为其分配 `ROLE_OGC_EDITOR`。该角色只需要具备 `ogc_lab:facilities` 的写权限，不应使用管理员账号作为日常编辑账号。
+GeoServer 中需要存在已启用的 `ogc_editor` 用户，并为其分配 `ROLE_OGC_EDITOR`。该角色需要具备 `ogc_lab:facilities`、`ogc_lab:demo_roads` 和 `ogc_lab:demo_zones` 的写权限，不应使用管理员账号作为日常编辑账号。
 
 ### 事务公共参数
 
@@ -147,10 +147,10 @@ GeoServer 中需要存在已启用的 `ogc_editor` 用户，并为其分配 `ROL
 | `version` | `2.0.0` | WFS 协议版本 |
 | `featureNS` | `http://localhost/ogc_lab` | 工作区命名空间 URI |
 | `featurePrefix` | `ogc_lab` | 工作区前缀 |
-| `featureType` | `facilities` | 编辑的要素类型 |
-| `srsName` | `CRS:84` | 按经度、纬度顺序写入点坐标 |
+| `featureType` | `facilities`、`demo_roads` 或 `demo_zones` | 根据编辑目标动态指定要素类型 |
+| `srsName` | `CRS:84` | 按经度、纬度顺序写入几何坐标 |
 
-OpenLayers 地图上的临时点使用 `EPSG:3857`。提交新增或修改前，前端会克隆几何并转换为 `CRS:84`，避免直接改变地图上的原始 Feature。
+OpenLayers 地图上的临时要素使用 `EPSG:3857`。提交新增或修改前，前端会克隆几何并转换为 `CRS:84`，避免直接改变地图上的原始 Feature。
 
 ### 新增设施点
 
@@ -191,3 +191,29 @@ OpenLayers 地图上的临时点使用 `EPSG:3857`。提交新增或修改前，
   → 清除选择状态
   → refresh() 重新加载 WFS 图层
 ```
+
+### 修改道路和服务范围面
+
+道路和服务范围面使用 OpenLayers `Modify` 交互修改顶点。`Modify` 改变线或面的形状；它不同于移动整个要素的 `Translate`，本阶段没有实现整体平移。
+
+线面修改流程：
+
+```text
+选择道路或服务范围面
+  → clone() 创建草稿 Feature
+  → 暂时隐藏服务器原始要素
+  → 在黄色草稿上拖动顶点
+  → 将草稿几何从 EPSG:3857 转换到 CRS:84
+  → 根据要素类型生成 demo_roads 或 demo_zones 的 Update
+  → 检查 totalUpdated 是否为 1
+  → 清除草稿并 refresh() 重新加载 WFS 图层
+```
+
+前端通过 Feature ID 前缀和几何类型共同确定事务目标：
+
+| Feature ID 前缀 | 几何类型 | WFS-T `featureType` |
+| --- | --- | --- |
+| `demo_roads.` | `LineString` | `demo_roads` |
+| `demo_zones.` | `Polygon` | `demo_zones` |
+
+提交使用的事务 Feature 只包含 `geom` 和原 Feature ID，因此 GeoServer 只更新几何字段，不会覆盖道路名称、道路等级或区域类型。提交失败时保留草稿和 `Modify` 交互，用户可以继续调整并重试；取消编辑则丢弃草稿并恢复服务器原始要素。
