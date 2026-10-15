@@ -8,6 +8,8 @@ defineProps<{
 defineEmits<{
   'start-distance': []
   'start-area': []
+  cancel: []
+  clear: []
 }>()
 </script>
 
@@ -19,7 +21,7 @@ defineEmits<{
       <button
         type="button"
         class="primary-button"
-        :disabled="disabled || mode !== 'idle'"
+        :disabled="disabled || mode === 'distance'"
         @click="$emit('start-distance')"
       >
         {{ mode === 'distance' ? '测距中...' : '测距' }}
@@ -28,7 +30,7 @@ defineEmits<{
       <button
         type="button"
         class="primary-button"
-        :disabled="disabled || mode !== 'idle'"
+        :disabled="disabled || mode === 'area'"
         @click="$emit('start-area')"
       >
         {{ mode === 'area' ? '测面积中...' : '测面积' }}
@@ -44,6 +46,25 @@ defineEmits<{
     <p v-if="result" class="measurement-result">
       测量结果：{{ result }}
     </p>
+
+    <div class="measurement-secondary-actions">
+      <button
+        type="button"
+        class="secondary-button"
+        :disabled="mode === 'idle'"
+        @click="$emit('cancel')"
+      >
+        取消测量
+      </button>
+
+      <button
+        type="button"
+        class="secondary-button"
+        @click="$emit('clear')"
+      >
+        清空测量
+      </button>
+    </div>
   </aside>
 </template>
 
@@ -72,6 +93,12 @@ defineEmits<{
   gap: 8px;
 }
 
+.measurement-secondary-actions {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
 .primary-button {
   width: 100%;
   padding: 7px 10px;
@@ -84,6 +111,22 @@ defineEmits<{
 }
 
 .primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.secondary-button {
+  width: 100%;
+  padding: 6px 9px;
+  color: #374151;
+  font: inherit;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.secondary-button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
 }

@@ -15,7 +15,9 @@ import type { BaseMapType } from './services/baseMaps'
 import type { WfsLoadState } from './services/ogcWfs'
 
 import Map from 'ol/Map'    // 相当于 Cesium 的 Viewer
+import Overlay from 'ol/Overlay'
 import View from 'ol/View'  // 相当于 Cesium 的 Camera / Scene
+import type { EventsKey } from 'ol/events'
 import type TileLayer from 'ol/layer/Tile'
 import type WMTS from 'ol/source/WMTS'
 import type Feature from 'ol/Feature'
@@ -31,6 +33,7 @@ import MousePosition from 'ol/control/MousePosition'
 import { createStringXY } from 'ol/coordinate'
 import LineString from 'ol/geom/LineString'
 import Polygon from 'ol/geom/Polygon'
+import { unByKey } from 'ol/Observable'
 import { getArea as getSphereArea, getLength as getSphereLength } from 'ol/sphere'
 
 // 坐标转换
@@ -76,6 +79,11 @@ type MeasurementMode = 'idle' | 'distance' | 'area'
 type ActiveMeasurementMode = Exclude<MeasurementMode, 'idle'>
 
 let measurementDrawInteraction: Draw | null = null
+let measurementGeometryChangeKey: EventsKey | null = null
+let measurementDrawEventKeys: EventsKey[] = []
+let activeMeasurementOverlay: Overlay | null = null
+const completedMeasurementOverlays: Overlay[] = []
+let selectActiveBeforeMeasurement = true
 const measurementMode = ref<MeasurementMode>('idle')
 const measurementResult = ref('')
 
@@ -282,6 +290,84 @@ function formatArea(polygon: Polygon): string {
   return `${area.toFixed(2)} m²`
 }
 
+// 解除当前草图几何的实时变化监听
+function removeMeasurementGeometryChangeListener() {
+  if (!measurementGeometryChangeKey) return
+
+  unByKey(measurementGeometryChangeKey)
+  measurementGeometryChangeKey = null
+}
+
+// 解除当前测量 Draw 的开始与结束监听
+function removeMeasurementDrawEventListeners() {
+  if (measurementDrawEventKeys.length === 0) return
+
+  unByKey(measurementDrawEventKeys)
+  measurementDrawEventKeys = []
+}
+
+// 创建一个跟随测量几何的地图标签
+function createMeasurementOverlay(): Overlay | null {
+  if (!map) return null
+
+  const element = document.createElement('div')
+  element.className = 'measurement-tooltip measurement-tooltip--active'
+
+  const overlay = new Overlay({
+    element,
+    offset: [0, -12],
+    positioning: 'bottom-center',
+    stopEvent: false,
+  })
+
+  map.addOverlay(overlay)
+  return overlay
+}
+
+// 移除未完成测量使用的实时标签
+function removeActiveMeasurementOverlay() {
+  if (!activeMeasurementOverlay) return
+
+  map?.removeOverlay(activeMeasurementOverlay)
+  activeMeasurementOverlay.getElement()?.remove()
+  activeMeasurementOverlay = null
+}
+
+// 根据草图的当前几何更新面板和地图标签
+function updateMeasurementResult(mode: ActiveMeasurementMode, geometry: Geometry) {
+  let result: string
+  let position: number[]
+
+  if (mode === 'distance' && geometry instanceof LineString) {
+    result = formatLength(geometry)
+    position = geometry.getLastCoordinate()
+  } else if (mode === 'area' && geometry instanceof Polygon) {
+    result = formatArea(geometry)
+    position = geometry.getInteriorPoint().getCoordinates()
+  } else {
+    return
+  }
+
+  measurementResult.value = result
+
+  const element = activeMeasurementOverlay?.getElement()
+  if (element) element.textContent = result
+
+  activeMeasurementOverlay?.setPosition(position)
+}
+
+// 将实时标签转换为保留在地图上的最终结果标签
+function finishMeasurementOverlay() {
+  if (!activeMeasurementOverlay) return
+
+  const element = activeMeasurementOverlay.getElement()
+  element?.classList.remove('measurement-tooltip--active')
+  element?.classList.add('measurement-tooltip--static')
+
+  completedMeasurementOverlays.push(activeMeasurementOverlay)
+  activeMeasurementOverlay = null
+}
+
 // 从地图中移除当前 Draw 交互
 function removeDrawInteraction() {
   if (map && drawInteraction) {
@@ -293,16 +379,38 @@ function removeDrawInteraction() {
 
 // 放弃未完成的测量草图，并从地图移除测量 Draw
 function cancelMeasurementDrawing() {
+  const hadActiveMeasurement = measurementDrawInteraction !== null
+    || measurementMode.value !== 'idle'
+
+  if (!hadActiveMeasurement) return
+
   if (measurementDrawInteraction) {
     measurementDrawInteraction.abortDrawing()
     map?.removeInteraction(measurementDrawInteraction)
   }
 
+  removeMeasurementGeometryChangeListener()
+  removeMeasurementDrawEventListeners()
+  removeActiveMeasurementOverlay()
   measurementDrawInteraction = null
   measurementMode.value = 'idle'
+  measurementResult.value = ''
 
-  // 测量结束后恢复 WFS 要素选择
-  selectInteraction?.setActive(true)
+  // 恢复进入测量之前的 Select 激活状态
+  selectInteraction?.setActive(selectActiveBeforeMeasurement)
+}
+
+// 清空未完成草图、已完成要素与全部结果标签
+function clearMeasurements() {
+  cancelMeasurementDrawing()
+  measurementSource.clear()
+  measurementResult.value = ''
+
+  completedMeasurementOverlays.forEach(overlay => {
+    map?.removeOverlay(overlay)
+    overlay.getElement()?.remove()
+  })
+  completedMeasurementOverlays.length = 0
 }
 
 // 根据测量模式创建线或面的 Draw 交互
@@ -313,6 +421,7 @@ function startMeasurement(mode: ActiveMeasurementMode) {
   cancelMeasurementDrawing()
 
   // 测量点击不应同时触发 WFS Select
+  selectActiveBeforeMeasurement = selectInteraction?.getActive() ?? false
   selectInteraction?.setActive(false)
 
   const interaction = new Draw({
@@ -324,16 +433,26 @@ function startMeasurement(mode: ActiveMeasurementMode) {
   measurementMode.value = mode
   measurementResult.value = ''
 
-  interaction.once('drawend', event => {
+  const drawStartKey = interaction.on('drawstart', event => {
+    const geometry = event.feature.getGeometry()
+    if (!geometry) return
+
+    removeMeasurementGeometryChangeListener()
+    removeActiveMeasurementOverlay()
+    activeMeasurementOverlay = createMeasurementOverlay()
+
+    const updateResult = () => updateMeasurementResult(mode, geometry)
+    updateResult()
+    measurementGeometryChangeKey = geometry.on('change', updateResult)
+  })
+
+  const drawEndKey = interaction.on('drawend', event => {
     const geometry = event.feature.getGeometry()
 
-    if (mode === 'distance' && geometry instanceof LineString) {
-      measurementResult.value = formatLength(geometry)
-    }
+    if (geometry) updateMeasurementResult(mode, geometry)
 
-    if (mode === 'area' && geometry instanceof Polygon) {
-      measurementResult.value = formatArea(geometry)
-    }
+    removeMeasurementGeometryChangeListener()
+    finishMeasurementOverlay()
 
     // 当前版本每次点击按钮只绘制一个测量图形
     map?.removeInteraction(interaction)
@@ -342,9 +461,12 @@ function startMeasurement(mode: ActiveMeasurementMode) {
       measurementDrawInteraction = null
     }
 
+    removeMeasurementDrawEventListeners()
     measurementMode.value = 'idle'
-    selectInteraction?.setActive(true)
+    selectInteraction?.setActive(selectActiveBeforeMeasurement)
   })
+
+  measurementDrawEventKeys = [drawStartKey, drawEndKey]
 
   map.addInteraction(interaction)
 }
@@ -656,7 +778,7 @@ onMounted(async () => {
 
 // 组件卸载时解除地图挂载
 onBeforeUnmount(() => {
-  cancelMeasurementDrawing()
+  clearMeasurements()
   removeDrawInteraction()
   removeModifyInteraction()
 
@@ -701,6 +823,8 @@ onBeforeUnmount(() => {
       :result="measurementResult"
       @start-distance="startDistanceMeasurement"
       @start-area="startAreaMeasurement"
+      @cancel="cancelMeasurementDrawing"
+      @clear="clearMeasurements"
     />
     <FeatureInfoPanel
       :visible="wfsVisible"
