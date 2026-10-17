@@ -11,7 +11,7 @@ import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style'
 const WFS_URL = 'http://localhost:18080/geoserver/ogc_lab/ows'
 const DATA_PROJECTION = 'EPSG:4326'
 
-type WfsVectorSource = VectorSource<Feature<Geometry>>
+export type WfsVectorSource = VectorSource<Feature<Geometry>>
 export type WfsVectorLayer = VectorLayer<WfsVectorSource>
 export type WfsLayerKey = 'facilities' | 'roads' | 'zones'
 export type WfsLoadStatus = 'idle' | 'loading' | 'success' | 'error'
@@ -28,6 +28,11 @@ interface WfsLayerConfig {
     key: WfsLayerKey
     label: string
     typeName: string
+}
+
+interface WfsLayerCollection {
+    layers: WfsVectorLayer[]
+    roadSource: WfsVectorSource
 }
 
 type WfsLoadListener = (state: WfsLoadState) => void
@@ -113,7 +118,7 @@ function createWfsSource(config: WfsLayerConfig, onLoadState: WfsLoadListener): 
 }
 
 // 创建点、线、面三个 WFS 矢量图层
-export function createWfsLayers(onLoadState: WfsLoadListener): WfsVectorLayer[] {
+export function createWfsLayers(onLoadState: WfsLoadListener): WfsLayerCollection {
     const zoneLayer = new VectorLayer({
         visible: false,
         source: createWfsSource({
@@ -127,13 +132,15 @@ export function createWfsLayers(onLoadState: WfsLoadListener): WfsVectorLayer[] 
         }),
     })
 
+    const roadSource = createWfsSource({
+        key: 'roads',
+        label: '道路',
+        typeName: 'ogc_lab:demo_roads',
+    }, onLoadState)
+
     const roadLayer = new VectorLayer({
         visible: false,
-        source: createWfsSource({
-            key: 'roads',
-            label: '道路',
-            typeName: 'ogc_lab:demo_roads',
-        }, onLoadState),
+        source: roadSource,
         style: new Style({
             stroke: new Stroke({ color: '#f59e0b', width: 4 }),
         }),
@@ -155,5 +162,8 @@ export function createWfsLayers(onLoadState: WfsLoadListener): WfsVectorLayer[] 
         }),
     })
 
-    return [zoneLayer, roadLayer, facilityLayer]
+    return {
+        layers: [zoneLayer, roadLayer, facilityLayer],
+        roadSource,
+    }
 }

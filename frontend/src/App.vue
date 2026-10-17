@@ -25,6 +25,7 @@ import type Geometry from 'ol/geom/Geometry'
 import Select from 'ol/interaction/Select'
 import Draw from 'ol/interaction/Draw'
 import Modify from 'ol/interaction/Modify'
+import Snap from 'ol/interaction/Snap'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style'
@@ -74,6 +75,8 @@ let selectInteraction: Select | null = null
 let drawInteraction: Draw | null = null
 // 保存几何修改交互，提交或取消时用于移除
 let modifyInteraction: Modify | null = null
+// 保存设施点新增时的道路吸附交互
+let snapInteraction: Snap | null = null
 
 type MeasurementMode = 'idle' | 'distance' | 'area'
 type ActiveMeasurementMode = Exclude<MeasurementMode, 'idle'>
@@ -188,7 +191,7 @@ const selectedWfsStyle = new Style({
   stroke: new Stroke({ color: '#ef4444', width: 3 }),
 })
 
-const wfsLayers = createWfsLayers(handleWfsLoadState)
+const { layers: wfsLayers, roadSource } = createWfsLayers(handleWfsLoadState)
 
 // 同步界面状态并切换全部 WFS 矢量图层
 function handleWfsVisibilityChange(visible: boolean) {
@@ -377,6 +380,15 @@ function removeDrawInteraction() {
   drawInteraction = null
 }
 
+// 从地图中移除设施点新增使用的 Snap 交互
+function removeSnapInteraction() {
+  if (map && snapInteraction) {
+    map.removeInteraction(snapInteraction)
+  }
+
+  snapInteraction = null
+}
+
 // 放弃未完成的测量草图，并从地图移除测量 Draw
 function cancelMeasurementDrawing() {
   const hadActiveMeasurement = measurementDrawInteraction !== null
@@ -495,6 +507,7 @@ function startFacilityInsert() {
   cancelMeasurementDrawing()
   handleWfsVisibilityChange(true)
   removeDrawInteraction()
+  removeSnapInteraction()
   removeModifyInteraction()
   clearSelectedWfsFeature()
   draftSource.clear()
@@ -505,22 +518,32 @@ function startFacilityInsert() {
   selectInteraction?.setActive(false)
 
   drawInteraction = new Draw({ source: draftSource, type: 'Point' })
+  snapInteraction = new Snap({
+    source: roadSource,
+    pixelTolerance: 10,
+    vertex: true,
+    edge: true,
+  })
 
   // 点绘制完成后保存临时 Feature，并进入属性填写阶段
   drawInteraction.once('drawend', event => {
     draftFeature = event.feature
     editorMode.value = 'form'
+    removeSnapInteraction()
     removeDrawInteraction()
     selectInteraction?.setActive(true)
   })
 
+  // 交互会按添加顺序的反向处理：Snap 后添加，但会先处理指针事件
   map.addInteraction(drawInteraction)
+  map.addInteraction(snapInteraction)
   editorMode.value = 'drawing'
 }
 
 // 取消当前新增或修改操作并清除临时点
 function cancelFacilityEditing() {
   removeDrawInteraction()
+  removeSnapInteraction()
   removeModifyInteraction()
   draftSource.clear()
   draftFeature = null
@@ -538,6 +561,7 @@ function startFacilityUpdate() {
 
   cancelMeasurementDrawing()
   removeDrawInteraction()
+  removeSnapInteraction()
   removeModifyInteraction()
   draftSource.clear()
   transactionMessage.value = ''
@@ -568,6 +592,7 @@ function startGeometryUpdate() {
 
   cancelMeasurementDrawing()
   removeDrawInteraction()
+  removeSnapInteraction()
   removeModifyInteraction()
   draftSource.clear()
   transactionMessage.value = ''
@@ -780,6 +805,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   clearMeasurements()
   removeDrawInteraction()
+  removeSnapInteraction()
   removeModifyInteraction()
 
   if (map && selectInteraction) {
