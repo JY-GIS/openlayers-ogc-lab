@@ -15,6 +15,7 @@ const props = defineProps<{
   map: Map | null
   selectedFeature: SelectedFeatureInfo | null
   coordinate?: Coordinate
+  message?: string
 }>()
 
 const emit = defineEmits<{
@@ -84,6 +85,10 @@ onBeforeUnmount(removePopupOverlay)
       <dt>几何类型</dt>
       <dd>{{ selectedFeature.geometryType }}</dd>
     </dl>
+
+    <p v-else-if="message" class="popup-message">
+      {{ message }}
+    </p>
   </div>
 </template>
 
@@ -145,5 +150,12 @@ onBeforeUnmount(removePopupOverlay)
   margin: 0;
   color: #111827;
   overflow-wrap: anywhere;
+}
+
+.popup-message {
+  margin: 0;
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 1.5;
 }
 </style>

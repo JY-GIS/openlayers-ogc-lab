@@ -6,7 +6,7 @@ import FeatureEditor from './components/FeatureEditor.vue'
 import FeatureInfoPanel from './components/FeatureInfoPanel.vue'
 import FeaturePopup from './components/FeaturePopup.vue'
 import MeasurementPanel from './components/MeasurementPanel.vue'
-import { createFacilitiesWmsLayer } from './services/ogcWms'
+import { createFacilitiesWmsLayer, queryFacilitiesFeatureInfo } from './services/ogcWms'
 import { createFacilitiesWmtsLayer } from './services/ogcWmts'
 import { createWfsLayers } from './services/ogcWfs'
 import { createBaseMapLayers } from './services/baseMaps'
@@ -14,6 +14,7 @@ import { deleteFacility, insertFacility, updateFacility, updateGeometry } from '
 import type { EditableGeometryLayer, FacilityInput } from './services/ogcWfsTransaction'
 import type { BaseMapType } from './services/baseMaps'
 import type { WfsLoadState } from './services/ogcWfs'
+import type { WmsFeatureInfo } from './services/ogcWms'
 
 import Map from 'ol/Map'    // 相当于 Cesium 的 Viewer
 import Overlay from 'ol/Overlay'
@@ -111,8 +112,11 @@ function handleBaseMapChange(baseMap: BaseMapType) {
 
 const facilitiesWmsVisible = ref(true)
 const facilitiesWmsLayer = createFacilitiesWmsLayer()
+const wmsFeatureInfo = ref<WmsFeatureInfo | null>(null)
+const wmsFeatureInfoCoordinate = ref<Coordinate | undefined>(undefined)
+const wmsFeatureInfoMessage = ref('')
+let wmsFeatureInfoClickKey: EventsKey | null = null
 const facilitiesWmtsVisible = ref(false)
-// 保存异步创建的设施点 WMTS 图层
 let facilitiesWmtsLayer: TileLayer<WMTS> | null = null
 const wfsVisible = ref(false)
 const selectedFeature = ref<SelectedFeatureInfo | null>(null)
@@ -203,6 +207,8 @@ function handleWfsVisibilityChange(visible: boolean) {
   wfsVisible.value = visible
   wfsLayers.forEach(layer => layer.setVisible(visible))
 
+  if (visible) clearWmsFeatureInfo()
+
   if (!visible) {
     selectInteraction?.getFeatures().clear()
     selectedFeature.value = null
@@ -214,10 +220,49 @@ function handleFacilitiesWmtsVisibilityChange(visible: boolean) {
   facilitiesWmtsVisible.value = visible
   facilitiesWmtsLayer?.setVisible(visible)
 }
+// 清除 WMS 属性弹窗和查询结果
+function clearWmsFeatureInfo() {
+  wmsFeatureInfo.value = null
+  wmsFeatureInfoCoordinate.value = undefined
+  wmsFeatureInfoMessage.value = ''
+}
+// 查询地图点击位置对应的设施点 WMS 属性
+async function handleWmsFeatureInfoClick(coordinate: Coordinate) {
+  if (!map || !facilitiesWmsVisible.value || wfsVisible.value || editorMode.value !== 'idle' || measurementMode.value !== 'idle') {
+    return
+  }
+
+  const source = facilitiesWmsLayer.getSource()
+  const resolution = map.getView().getResolution()
+  const projection = map.getView().getProjection()
+
+  if (!source || resolution === undefined) return
+
+  wmsFeatureInfo.value = null
+  wmsFeatureInfoCoordinate.value = coordinate
+  wmsFeatureInfoMessage.value = '正在查询设施点属性'
+
+  try {
+    const featureInfo = await queryFacilitiesFeatureInfo(
+      source,
+      coordinate,
+      resolution,
+      projection,
+    )
+
+    wmsFeatureInfo.value = featureInfo
+    wmsFeatureInfoMessage.value = featureInfo ? '' : '当前位置没有设施点'
+  } catch (error) {
+    wmsFeatureInfo.value = null
+    wmsFeatureInfoMessage.value = error instanceof Error ? error.message : 'WMS GetFeatureInfo 请求失败'
+  }
+}
 // 同步界面状态并切换设施点 WMS 图层
 function handleFacilitiesVisibilityChange(visible: boolean) {
   facilitiesWmsVisible.value = visible
   facilitiesWmsLayer.setVisible(visible)
+
+  if (!visible) clearWmsFeatureInfo()
 }
 
 // 从三种测试图层中读取对应的业务类型字段
@@ -444,6 +489,7 @@ function startMeasurement(mode: ActiveMeasurementMode) {
   // 保证同一时刻只有一个测量 Draw
   cancelMeasurementDrawing()
   hideFeaturePopup()
+  clearWmsFeatureInfo()
 
   // 测量点击不应同时触发 WFS Select
   selectActiveBeforeMeasurement = selectInteraction?.getActive() ?? false
@@ -770,6 +816,11 @@ onMounted(async () => {
   })
   mapInstance.value = map
 
+  // 单击地图时执行 WMS GetFeatureInfo
+  wmsFeatureInfoClickKey = map.on('singleclick', event => {
+    void handleWmsFeatureInfoClick(event.coordinate)
+  })
+
   // 创建只作用于 WFS 图层的点击选择交互
   selectInteraction = new Select({
     layers: wfsLayers,
@@ -825,6 +876,11 @@ onBeforeUnmount(() => {
   removeSnapInteraction()
   removeModifyInteraction()
 
+  if (wmsFeatureInfoClickKey) {
+    unByKey(wmsFeatureInfoClickKey)
+    wmsFeatureInfoClickKey = null
+  }
+
   if (map && selectInteraction) {
     map.removeInteraction(selectInteraction)
   }
@@ -879,6 +935,13 @@ onBeforeUnmount(() => {
       :selected-feature="selectedFeature"
       :coordinate="featurePopupCoordinate"
       @close="clearSelectedWfsFeature"
+    />
+    <FeaturePopup
+      :map="mapInstance"
+      :selected-feature="wmsFeatureInfo"
+      :coordinate="wmsFeatureInfoCoordinate"
+      :message="wmsFeatureInfoMessage"
+      @close="clearWmsFeatureInfo"
     />
     <FeatureEditor
       :mode="editorMode"
