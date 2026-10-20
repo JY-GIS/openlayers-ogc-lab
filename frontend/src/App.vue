@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, onMounted, onBeforeUnmount } from 'vue'
 
 import LayerPanel from './components/LayerPanel.vue'
 import FeatureEditor from './components/FeatureEditor.vue'
 import FeatureInfoPanel from './components/FeatureInfoPanel.vue'
+import FeaturePopup from './components/FeaturePopup.vue'
 import MeasurementPanel from './components/MeasurementPanel.vue'
 import { createFacilitiesWmsLayer } from './services/ogcWms'
 import { createFacilitiesWmtsLayer } from './services/ogcWmts'
@@ -32,6 +33,7 @@ import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style'
 
 import MousePosition from 'ol/control/MousePosition'
 import { createStringXY } from 'ol/coordinate'
+import type { Coordinate } from 'ol/coordinate'
 import LineString from 'ol/geom/LineString'
 import Polygon from 'ol/geom/Polygon'
 import { unByKey } from 'ol/Observable'
@@ -69,6 +71,8 @@ const coordinateContainer = ref<HTMLDivElement | null>(null)
 
 // 保存 OpenLayers 地图实例
 let map: Map | null = null
+// 只向属性弹窗组件提供地图实例，不深度代理 OpenLayers 对象
+const mapInstance = shallowRef<Map | null>(null)
 // 保存 WFS 要素选择交互，组件卸载时用于移除
 let selectInteraction: Select | null = null
 // 保存点绘制交互，绘制完成或取消时用于移除
@@ -112,6 +116,7 @@ const facilitiesWmtsVisible = ref(false)
 let facilitiesWmtsLayer: TileLayer<WMTS> | null = null
 const wfsVisible = ref(false)
 const selectedFeature = ref<SelectedFeatureInfo | null>(null)
+const featurePopupCoordinate = ref<Coordinate | undefined>(undefined)
 const selectedFacilityInput = ref<FacilityInput | null>(null)
 const selectedGeometryLabel = ref<string | null>(null)
 const selectedGeometryLayer = ref<EditableGeometryLayer | null>(null)
@@ -201,6 +206,7 @@ function handleWfsVisibilityChange(visible: boolean) {
   if (!visible) {
     selectInteraction?.getFeatures().clear()
     selectedFeature.value = null
+    hideFeaturePopup()
   }
 }
 // 同步界面状态并切换设施点 WMTS 图层
@@ -256,12 +262,18 @@ function getEditableGeometryTarget(feature: Feature<Geometry>): {
   return null
 }
 
+// 只隐藏属性弹窗，不清除 WFS-T 编辑仍需使用的要素引用
+function hideFeaturePopup() {
+  featurePopupCoordinate.value = undefined
+}
+
 // 恢复原要素样式，并清除当前 WFS 要素选择及属性状态
 function clearSelectedWfsFeature() {
   selectedWfsFeature?.setStyle(undefined)
   selectInteraction?.getFeatures().clear()
   selectedWfsFeature = null
   selectedFeature.value = null
+  hideFeaturePopup()
   selectedFacilityInput.value = null
   selectedGeometryLabel.value = null
   selectedGeometryLayer.value = null
@@ -431,6 +443,7 @@ function startMeasurement(mode: ActiveMeasurementMode) {
 
   // 保证同一时刻只有一个测量 Draw
   cancelMeasurementDrawing()
+  hideFeaturePopup()
 
   // 测量点击不应同时触发 WFS Select
   selectActiveBeforeMeasurement = selectInteraction?.getActive() ?? false
@@ -560,6 +573,7 @@ function startFacilityUpdate() {
   }
 
   cancelMeasurementDrawing()
+  hideFeaturePopup()
   removeDrawInteraction()
   removeSnapInteraction()
   removeModifyInteraction()
@@ -591,6 +605,7 @@ function startGeometryUpdate() {
   }
 
   cancelMeasurementDrawing()
+  hideFeaturePopup()
   removeDrawInteraction()
   removeSnapInteraction()
   removeModifyInteraction()
@@ -753,6 +768,7 @@ onMounted(async () => {
       zoom: 12,
     }),
   })
+  mapInstance.value = map
 
   // 创建只作用于 WFS 图层的点击选择交互
   selectInteraction = new Select({
@@ -767,6 +783,7 @@ onMounted(async () => {
 
     selectedWfsFeature = feature ?? null
     selectedFeature.value = feature ? createSelectedFeatureInfo(feature) : null
+    featurePopupCoordinate.value = feature ? event.mapBrowserEvent?.coordinate : undefined
 
     selectedFacilityInput.value = feature && isFacilityFeature(feature)
       ? {
@@ -856,6 +873,12 @@ onBeforeUnmount(() => {
       :visible="wfsVisible"
       :selected-feature="selectedFeature"
       :load-states="wfsLoadStates"
+    />
+    <FeaturePopup
+      :map="mapInstance"
+      :selected-feature="selectedFeature"
+      :coordinate="featurePopupCoordinate"
+      @close="clearSelectedWfsFeature"
     />
     <FeatureEditor
       :mode="editorMode"
