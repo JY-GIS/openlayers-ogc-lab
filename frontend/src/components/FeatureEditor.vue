@@ -229,7 +229,7 @@ function cancelEditing() {
 <style scoped>
 .editor-panel {
   position: absolute;
-  top: 310px;
+  top: 335px;
   right: 16px;
   z-index: 10;
   width: 180px;

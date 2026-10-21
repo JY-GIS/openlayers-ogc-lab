@@ -17,6 +17,11 @@ export default defineConfig(({ mode }) => {
 
     server: {
       proxy: {
+        '/geoserver': {
+          target: 'http://localhost:18080',
+          changeOrigin: true,
+        },
+
         '/wfs-transaction': {
           target: 'http://localhost:18080',
           changeOrigin: true,

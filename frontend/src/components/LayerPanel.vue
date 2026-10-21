@@ -6,6 +6,7 @@ defineProps<{
   facilitiesVisible: boolean
   facilitiesWmtsVisible: boolean
   wfsVisible: boolean
+  wcsDemVisible: boolean
 }>()
 
 const emit = defineEmits<{
@@ -13,6 +14,7 @@ const emit = defineEmits<{
   'visibility-change': [visible: boolean]
   'wmts-visibility-change': [visible: boolean]
   'wfs-visibility-change': [visible: boolean]
+  'wcs-dem-visibility-change': [visible: boolean]
 }>()
 
 // 将用户选择的底图通知父组件
@@ -36,6 +38,11 @@ function handleWmtsVisibilityChange(event: Event) {
 function handleWfsVisibilityChange(event: Event) {
   const checkbox = event.target as HTMLInputElement
   emit('wfs-visibility-change', checkbox.checked)
+}
+// 将 WCS DEM 复选框的新状态通知父组件
+function handleWcsDemVisibilityChange(event: Event) {
+  const checkbox = event.target as HTMLInputElement
+  emit('wcs-dem-visibility-change', checkbox.checked)
 }
 
 </script>
@@ -94,7 +101,16 @@ function handleWfsVisibilityChange(event: Event) {
           @change="handleWfsVisibilityChange"
         >
         <span>WFS 点线面</span>
-        </label>
+      </label>
+
+      <label class="layer-item">
+        <input
+          type="checkbox"
+          :checked="wcsDemVisible"
+          @change="handleWcsDemVisibilityChange"
+        >
+        <span>WCS 地形 DEM</span>
+      </label>
     </section>
   </aside>
 </template>

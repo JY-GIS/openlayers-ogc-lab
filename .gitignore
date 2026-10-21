@@ -33,3 +33,5 @@ dist-ssr
 Thumbs.db
 .idea/
 *.iml
+
+backend/geoserver/data-local/

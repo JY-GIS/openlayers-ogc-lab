@@ -15,6 +15,7 @@ import type { EditableGeometryLayer, FacilityInput } from './services/ogcWfsTran
 import type { BaseMapType } from './services/baseMaps'
 import type { WfsLoadState } from './services/ogcWfs'
 import type { WmsFeatureInfo } from './services/ogcWms'
+import { createQingdaoDemWcsLayer } from './services/ogcWcs'
 
 import Map from 'ol/Map'    // 相当于 Cesium 的 Viewer
 import Overlay from 'ol/Overlay'
@@ -119,6 +120,8 @@ let wmsFeatureInfoClickKey: EventsKey | null = null
 const facilitiesWmtsVisible = ref(false)
 let facilitiesWmtsLayer: TileLayer<WMTS> | null = null
 const wfsVisible = ref(false)
+const wcsDemVisible = ref(false)
+const wcsDemLayer = createQingdaoDemWcsLayer()
 const selectedFeature = ref<SelectedFeatureInfo | null>(null)
 const featurePopupCoordinate = ref<Coordinate | undefined>(undefined)
 const selectedFacilityInput = ref<FacilityInput | null>(null)
@@ -263,6 +266,12 @@ function handleFacilitiesVisibilityChange(visible: boolean) {
   facilitiesWmsLayer.setVisible(visible)
 
   if (!visible) clearWmsFeatureInfo()
+}
+
+// 切换通过 WCS 获取的市南区 DEM
+function handleWcsDemVisibilityChange(visible: boolean) {
+  wcsDemVisible.value = visible
+  wcsDemLayer.setVisible(visible)
 }
 
 // 从三种测试图层中读取对应的业务类型字段
@@ -802,6 +811,7 @@ onMounted(async () => {
     layers: [
       baseMapLayers.osmLayer,
       baseMapLayers.topographicLayer,
+      wcsDemLayer,
       facilitiesWmsLayer,
       ...wfsLayers,
       draftLayer,
@@ -911,10 +921,12 @@ onBeforeUnmount(() => {
       :facilities-visible="facilitiesWmsVisible"
       :facilities-wmts-visible="facilitiesWmtsVisible"
       :wfs-visible="wfsVisible"
+      :wcs-dem-visible="wcsDemVisible"
       @base-map-change="handleBaseMapChange"
       @visibility-change="handleFacilitiesVisibilityChange"
       @wmts-visibility-change="handleFacilitiesWmtsVisibilityChange"
       @wfs-visibility-change="handleWfsVisibilityChange"
+      @wcs-dem-visibility-change="handleWcsDemVisibilityChange"
     />
     <MeasurementPanel
       :disabled="editorMode !== 'idle'"
