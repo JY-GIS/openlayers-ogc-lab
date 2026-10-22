@@ -2,7 +2,7 @@ import TileLayer from 'ol/layer/Tile'
 import WMTSCapabilities from 'ol/format/WMTSCapabilities'
 import WMTS, { optionsFromCapabilities } from 'ol/source/WMTS'
 
-export const WMTS_CAPABILITIES_URL = 'http://localhost:18080/geoserver/gwc/service/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0'
+export const WMTS_CAPABILITIES_URL = '/geoserver/gwc/service/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0'
 
 // 读取 GeoWebCache 能力文档并创建设施点 WMTS 图层
 export async function createFacilitiesWmtsLayer(): Promise<TileLayer<WMTS>> {

@@ -11,9 +11,16 @@ interface SelectedFeatureInfo {
   geometryType: string
 }
 
+interface DemElevationInfo {
+  longitude: number
+  latitude: number
+  elevation: number
+}
+
 const props = defineProps<{
   map: Map | null
   selectedFeature: SelectedFeatureInfo | null
+  elevationInfo?: DemElevationInfo | null
   coordinate?: Coordinate
   message?: string
 }>()
@@ -66,13 +73,24 @@ onBeforeUnmount(removePopupOverlay)
     <button
       class="close-button"
       type="button"
-      aria-label="关闭要素属性弹窗"
+      aria-label="关闭地图信息弹窗"
       @click="emit('close')"
     >
       ×
     </button>
 
-    <dl v-if="selectedFeature" class="feature-properties">
+    <dl v-if="elevationInfo" class="feature-properties">
+      <dt>经度</dt>
+      <dd>{{ elevationInfo.longitude.toFixed(6) }}°</dd>
+
+      <dt>纬度</dt>
+      <dd>{{ elevationInfo.latitude.toFixed(6) }}°</dd>
+
+      <dt>高程</dt>
+      <dd>{{ elevationInfo.elevation.toFixed(1) }} m</dd>
+    </dl>
+
+    <dl v-else-if="selectedFeature" class="feature-properties">
       <dt>名称</dt>
       <dd>{{ selectedFeature.name }}</dd>
 

@@ -1,9 +1,18 @@
 import WebGLTileLayer from 'ol/layer/WebGLTile'
 import GeoTIFF from 'ol/source/GeoTIFF'
 import TileGrid from 'ol/tilegrid/TileGrid'
+import { containsCoordinate } from 'ol/extent'
+import type { Coordinate } from 'ol/coordinate'
+import type { Pixel } from 'ol/pixel'
 
 const WCS_URL = '/geoserver/ows'
 const COVERAGE_ID = 'ogc_lab__qingdao-shinan-dem-12.5m'
+const DEM_NODATA_VALUE = -32768
+
+export type DemElevationQueryResult =
+    | { status: 'value'; elevation: number }
+    | { status: 'no-data' }
+    | { status: 'loading' }
 
 function createCoverageUrl(): string {
     const params = new URLSearchParams({
@@ -19,6 +28,37 @@ function createCoverageUrl(): string {
     return `${WCS_URL}?${params.toString()}`
 }
 
+// 从当前已经加载的数据瓦片读取点击位置的原始高程值
+export function queryQingdaoDemElevation(
+    layer: WebGLTileLayer,
+    pixel: Pixel,
+    coordinate: Coordinate,
+): DemElevationQueryResult {
+    const source = layer.getSource()
+    if (!source || source.getState() !== 'ready') {
+        return { status: 'loading' }
+    }
+
+    // 拿到该瓦片网格覆盖的地理范围 [minX, minY, maxX, maxY]
+    const extent = source.getTileGrid()?.getExtent()
+    if (!extent || !containsCoordinate(extent, coordinate)) {
+        return { status: 'no-data' }
+    }
+
+    const values = layer.getData(pixel) as Float32Array | null
+    if (!values) {
+        return { status: 'loading' }
+    }
+
+    const elevation = values[0]
+    const alpha = values[values.length - 1]
+    if (alpha === 0 || elevation === DEM_NODATA_VALUE) {
+        return { status: 'no-data' }
+    }
+
+    return { status: 'value', elevation }
+}
+
 export function createQingdaoDemWcsLayer(): WebGLTileLayer {
     let geotiffExtentAdjusted = false
 
@@ -26,7 +66,7 @@ export function createQingdaoDemWcsLayer(): WebGLTileLayer {
         sources: [
             {
                 url: createCoverageUrl(),
-                nodata: -32768,
+                nodata: DEM_NODATA_VALUE,
             },
         ],
 

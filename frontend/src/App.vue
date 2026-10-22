@@ -15,7 +15,7 @@ import type { EditableGeometryLayer, FacilityInput } from './services/ogcWfsTran
 import type { BaseMapType } from './services/baseMaps'
 import type { WfsLoadState } from './services/ogcWfs'
 import type { WmsFeatureInfo } from './services/ogcWms'
-import { createQingdaoDemWcsLayer } from './services/ogcWcs'
+import { createQingdaoDemWcsLayer, queryQingdaoDemElevation } from './services/ogcWcs'
 
 import Map from 'ol/Map'    // 相当于 Cesium 的 Viewer
 import Overlay from 'ol/Overlay'
@@ -31,6 +31,7 @@ import Modify from 'ol/interaction/Modify'
 import Snap from 'ol/interaction/Snap'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
+import type { Pixel } from 'ol/pixel'
 import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style'
 
 import MousePosition from 'ol/control/MousePosition'
@@ -42,7 +43,7 @@ import { unByKey } from 'ol/Observable'
 import { getArea as getSphereArea, getLength as getSphereLength } from 'ol/sphere'
 
 // 坐标转换
-import { fromLonLat } from 'ol/proj'
+import { fromLonLat, toLonLat } from 'ol/proj'
 
 // OpenLayers 自带的地图控件样式
 import 'ol/ol.css'
@@ -52,6 +53,12 @@ interface SelectedFeatureInfo {
   name: string
   category: string
   geometryType: string
+}
+
+interface DemElevationInfo {
+  longitude: number
+  latitude: number
+  elevation: number
 }
 
 type EditorMode =
@@ -116,12 +123,15 @@ const facilitiesWmsLayer = createFacilitiesWmsLayer()
 const wmsFeatureInfo = ref<WmsFeatureInfo | null>(null)
 const wmsFeatureInfoCoordinate = ref<Coordinate | undefined>(undefined)
 const wmsFeatureInfoMessage = ref('')
-let wmsFeatureInfoClickKey: EventsKey | null = null
+let mapSingleClickKey: EventsKey | null = null
 const facilitiesWmtsVisible = ref(false)
 let facilitiesWmtsLayer: TileLayer<WMTS> | null = null
 const wfsVisible = ref(false)
 const wcsDemVisible = ref(false)
 const wcsDemLayer = createQingdaoDemWcsLayer()
+const demElevationInfo = ref<DemElevationInfo | null>(null)
+const demElevationCoordinate = ref<Coordinate | undefined>(undefined)
+const demElevationMessage = ref('')
 const selectedFeature = ref<SelectedFeatureInfo | null>(null)
 const featurePopupCoordinate = ref<Coordinate | undefined>(undefined)
 const selectedFacilityInput = ref<FacilityInput | null>(null)
@@ -210,7 +220,10 @@ function handleWfsVisibilityChange(visible: boolean) {
   wfsVisible.value = visible
   wfsLayers.forEach(layer => layer.setVisible(visible))
 
-  if (visible) clearWmsFeatureInfo()
+  if (visible) {
+    clearWmsFeatureInfo()
+    clearDemElevation()
+  }
 
   if (!visible) {
     selectInteraction?.getFeatures().clear()
@@ -229,9 +242,47 @@ function clearWmsFeatureInfo() {
   wmsFeatureInfoCoordinate.value = undefined
   wmsFeatureInfoMessage.value = ''
 }
+// 清除 DEM 高程弹窗和上一次查询结果
+function clearDemElevation() {
+  demElevationInfo.value = null
+  demElevationCoordinate.value = undefined
+  demElevationMessage.value = ''
+}
+
+// 从已经加载的 DEM 数据瓦片读取点击位置的高程
+function handleDemElevationClick(pixel: Pixel, coordinate: Coordinate) {
+  if (!map) return
+
+  demElevationInfo.value = null
+  demElevationCoordinate.value = coordinate
+
+  const result = queryQingdaoDemElevation(wcsDemLayer, pixel, coordinate)
+
+  if (result.status === 'loading') {
+    demElevationMessage.value = 'DEM 数据尚未加载完成，请稍后再试'
+    return
+  }
+
+  if (result.status === 'no-data') {
+    demElevationMessage.value = '当前位置没有有效 DEM 高程数据'
+    return
+  }
+
+  const [longitude, latitude] = toLonLat(
+    coordinate,
+    map.getView().getProjection(),
+  )
+
+  demElevationInfo.value = {
+    longitude,
+    latitude,
+    elevation: result.elevation,
+  }
+  demElevationMessage.value = ''
+}
 // 查询地图点击位置对应的设施点 WMS 属性
 async function handleWmsFeatureInfoClick(coordinate: Coordinate) {
-  if (!map || !facilitiesWmsVisible.value || wfsVisible.value || editorMode.value !== 'idle' || measurementMode.value !== 'idle') {
+  if (!map || !facilitiesWmsVisible.value || wfsVisible.value || wcsDemVisible.value || editorMode.value !== 'idle' || measurementMode.value !== 'idle') {
     return
   }
 
@@ -253,13 +304,36 @@ async function handleWmsFeatureInfoClick(coordinate: Coordinate) {
       projection,
     )
 
+    if (!facilitiesWmsVisible.value || wfsVisible.value || wcsDemVisible.value) return
+
     wmsFeatureInfo.value = featureInfo
     wmsFeatureInfoMessage.value = featureInfo ? '' : '当前位置没有设施点'
   } catch (error) {
+    if (!facilitiesWmsVisible.value || wfsVisible.value || wcsDemVisible.value) return
     wmsFeatureInfo.value = null
     wmsFeatureInfoMessage.value = error instanceof Error ? error.message : 'WMS GetFeatureInfo 请求失败'
   }
 }
+
+// 按编辑、测量、WFS、DEM、WMS 的优先级处理地图单击
+function handleMapSingleClick(pixel: Pixel, coordinate: Coordinate) {
+  if (editorMode.value !== 'idle' || measurementMode.value !== 'idle') {
+    return
+  }
+
+  if (wfsVisible.value) {
+    return
+  }
+
+  if (wcsDemVisible.value) {
+    clearWmsFeatureInfo()
+    handleDemElevationClick(pixel, coordinate)
+    return
+  }
+
+  void handleWmsFeatureInfoClick(coordinate)
+}
+
 // 同步界面状态并切换设施点 WMS 图层
 function handleFacilitiesVisibilityChange(visible: boolean) {
   facilitiesWmsVisible.value = visible
@@ -269,9 +343,16 @@ function handleFacilitiesVisibilityChange(visible: boolean) {
 }
 
 // 切换通过 WCS 获取的市南区 DEM
+// 切换 DEM 图层，并同步清理互斥的查询弹窗
 function handleWcsDemVisibilityChange(visible: boolean) {
   wcsDemVisible.value = visible
   wcsDemLayer.setVisible(visible)
+
+  if (visible) {
+    clearWmsFeatureInfo()
+  } else {
+    clearDemElevation()
+  }
 }
 
 // 从三种测试图层中读取对应的业务类型字段
@@ -499,6 +580,7 @@ function startMeasurement(mode: ActiveMeasurementMode) {
   cancelMeasurementDrawing()
   hideFeaturePopup()
   clearWmsFeatureInfo()
+  clearDemElevation()
 
   // 测量点击不应同时触发 WFS Select
   selectActiveBeforeMeasurement = selectInteraction?.getActive() ?? false
@@ -826,9 +908,9 @@ onMounted(async () => {
   })
   mapInstance.value = map
 
-  // 单击地图时执行 WMS GetFeatureInfo
-  wmsFeatureInfoClickKey = map.on('singleclick', event => {
-    void handleWmsFeatureInfoClick(event.coordinate)
+  // 一个监听器统一安排 WFS、DEM 和 WMS 的点击优先级
+  mapSingleClickKey = map.on('singleclick', event => {
+    handleMapSingleClick(event.pixel, event.coordinate)
   })
 
   // 创建只作用于 WFS 图层的点击选择交互
@@ -840,6 +922,7 @@ onMounted(async () => {
 
   // 保存选中要素，并在设施点被选中时准备编辑属性
   selectInteraction.on('select', event => {
+    clearDemElevation()
     const feature = event.selected[0] as Feature<Geometry> | undefined
 
     selectedWfsFeature = feature ?? null
@@ -886,9 +969,9 @@ onBeforeUnmount(() => {
   removeSnapInteraction()
   removeModifyInteraction()
 
-  if (wmsFeatureInfoClickKey) {
-    unByKey(wmsFeatureInfoClickKey)
-    wmsFeatureInfoClickKey = null
+  if (mapSingleClickKey) {
+    unByKey(mapSingleClickKey)
+    mapSingleClickKey = null
   }
 
   if (map && selectInteraction) {
@@ -954,6 +1037,14 @@ onBeforeUnmount(() => {
       :coordinate="wmsFeatureInfoCoordinate"
       :message="wmsFeatureInfoMessage"
       @close="clearWmsFeatureInfo"
+    />
+    <FeaturePopup
+      :map="mapInstance"
+      :selected-feature="null"
+      :elevation-info="demElevationInfo"
+      :coordinate="demElevationCoordinate"
+      :message="demElevationMessage"
+      @close="clearDemElevation"
     />
     <FeatureEditor
       :mode="editorMode"

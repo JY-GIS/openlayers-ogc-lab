@@ -3,7 +3,7 @@ import TileWMS from 'ol/source/TileWMS'
 import type { Coordinate } from 'ol/coordinate'
 import type { ProjectionLike } from 'ol/proj'
 
-const WMS_URL = 'http://localhost:18080/geoserver/ogc_lab/wms'
+const WMS_URL = '/geoserver/ogc_lab/wms'
 
 export interface WmsFeatureInfo {
     id: string

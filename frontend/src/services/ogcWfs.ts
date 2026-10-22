@@ -8,7 +8,7 @@ import { transformExtent } from 'ol/proj'
 import VectorSource from 'ol/source/Vector'
 import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style'
 
-const WFS_URL = 'http://localhost:18080/geoserver/ogc_lab/ows'
+const WFS_URL = '/geoserver/ogc_lab/ows'
 const DATA_PROJECTION = 'EPSG:4326'
 
 export type WfsVectorSource = VectorSource<Feature<Geometry>>
