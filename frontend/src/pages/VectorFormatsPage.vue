@@ -36,6 +36,18 @@ const kmlLayer = new VectorLayer({
   source: kmlSource,
 })
 
+const shapeZipParams = new URLSearchParams({
+  service: 'WFS',
+  version: '2.0.0',
+  request: 'GetFeature',
+  typeNames: 'ogc_lab:facilities',
+  outputFormat: 'SHAPE-ZIP',
+  srsName: 'EPSG:4326',
+  format_options: 'CHARSET:UTF-8',
+})
+
+const shapeZipUrl = `/geoserver/ogc_lab/ows?${shapeZipParams.toString()}`
+
 // 页面挂载后创建独立地图
 onMounted(() => {
   if (!mapContainer.value) return
@@ -63,12 +75,35 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main ref="mapContainer" class="format-map"></main>
+  <main class="format-page">
+    <div ref="mapContainer" class="format-map"></div>
+
+    <a :href="shapeZipUrl" class="download-button">
+      下载设施点 Shapefile
+    </a>
+  </main>
 </template>
 
 <style scoped>
+.format-page,
 .format-map {
   width: 100%;
   height: 100%;
+}
+
+.format-page {
+  position: relative;
+}
+
+.download-button {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  padding: 10px 14px;
+  color: #ffffff;
+  text-decoration: none;
+  background: #2563eb;
+  border-radius: 5px;
 }
 </style>
