@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 
-import GML32 from 'ol/format/GML32'
-import WFS from 'ol/format/WFS'
+import KML from 'ol/format/KML'
 import Map from 'ol/Map'
 import View from 'ol/View'
 import VectorLayer from 'ol/layer/Vector'
@@ -22,22 +21,19 @@ const params = new URLSearchParams({
   version: '2.0.0',
   request: 'GetFeature',
   typeNames: 'ogc_lab:facilities',
-  outputFormat: 'application/gml+xml; version=3.2',
-  srsName: 'EPSG:3857',
+  outputFormat: 'application/vnd.google-earth.kml+xml',
+  srsName: 'EPSG:4326',
 })
 
-const gmlSource = new VectorSource({
+const kmlSource = new VectorSource({
   url: `/geoserver/ogc_lab/ows?${params.toString()}`,
-  format: new WFS({
-    version: '2.0.0',
-    featureNS: 'http://localhost/ogc_lab',
-    featureType: 'facilities',
-    gmlFormat: new GML32(),
+  format: new KML({
+    extractStyles: true,
   }),
 })
 
-const gmlLayer = new VectorLayer({
-  source: gmlSource,
+const kmlLayer = new VectorLayer({
+  source: kmlSource,
 })
 
 // 页面挂载后创建独立地图
@@ -50,7 +46,7 @@ onMounted(() => {
       new TileLayer({
         source: new OSM(),
       }),
-      gmlLayer,
+      kmlLayer,
     ],
     view: new View({
       center: fromLonLat([120.38, 36.06]),
