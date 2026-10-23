@@ -2,189 +2,77 @@
 
 基于 Vue 3、TypeScript、OpenLayers、GeoServer 和 PostgreSQL/PostGIS 构建的二维 WebGIS 与 OGC 标准服务实验项目。
 
-## 系统架构
+## 学习进度
 
-```text
-浏览器
-  ↓
-Vue 3 + TypeScript + OpenLayers
-  ↓ WMS / WMTS / WFS / WFS-T
-GeoServer
-  ↓ JDBC
-PostgreSQL + PostGIS
-```
+#### OGC 服务
 
-## 技术栈
+- WMS：设施点地图图像、TileWMS 与 GetFeatureInfo 点击查询
+- WMTS：GeoWebCache、GetCapabilities、瓦片矩阵与 EPSG:900913
+- WFS：点线面 GetFeature、BBOX 范围加载、GeoJSON 解析与属性查询
+- WFS-T：设施点新增、修改、删除及事务响应校验
+- WFS-T：道路和服务范围面的顶点拖拽与几何更新
+- WFS-T：通过 Vite 代理和独立编辑账号保护写请求凭据
+- WCS：青岛市南区 DEM Coverage 发布与 GetCoverage 请求
+- WCS：GeoTIFF 原始高程值、NoData、客户端设色与空间定位修正
+- WCS：使用 `WebGLTileLayer.getData()` 查询地图点击位置的实际高程
 
-| 层级 | 技术 |
-| --- | --- |
-| 前端 | Vue 3、TypeScript、Vite |
-| 二维地图 | OpenLayers 10 |
-| 地图服务 | GeoServer 2.28.2、GeoWebCache |
-| 空间数据库 | PostgreSQL 14、PostGIS 3.5 |
-| 本地环境 | Docker Desktop、Docker Compose |
+#### OpenLayers 交互
 
-## 目录结构
+- OpenStreetMap 与地形底图切换
+- WMS、WMTS、WFS 和 WCS 图层显示控制
+- Select 点线面选择与 Overlay 属性弹窗
+- Draw 设施点绘制
+- Modify 点线面几何修改
+- Snap 新增设施点道路吸附
+- 测距、测面积与绘制过程实时提示
+- EPSG:4326、EPSG:3857 与 CRS:84 坐标转换
+- 编辑、测量、WFS选择、DEM查询和WMS查询的点击优先级管理
 
-```text
-openlayers-ogc-lab/
-├── frontend/                  # Vue 3 + OpenLayers 前端
-│   ├── public/
-│   ├── src/
-│   ├── package.json
-│   └── vite.config.ts
-├── backend/
-│   └── geoserver/             # GeoServer 配置说明与后续 SLD 样式
-├── database/
-│   └── create_schema.sql      # 点、线、面建表及青岛样例数据
-├── docs/                      # 配置记录与后续功能截图
-├── docker-compose.yml         # PostGIS 与 GeoServer 服务编排
-└── README.md
-```
+#### 矢量数据格式
 
-## 测试数据
+- GeoJSON：FeatureCollection、geometry、properties 与客户端投影转换
+- GML 3.2：WFS FeatureCollection、XML命名空间与GML几何解析
+- KML：Placemark、ExtendedData、经纬度坐标与样式提取
+- Shapefile：SHP、SHX、DBF、PRJ和CST配套文件
+- Shapefile：WFS SHAPE-ZIP导出、UTF-8中文属性与DBF字段名截断验证
 
-数据库统一使用 `EPSG:4326`，当前包含：
+## 开发环境
 
-| 表 | 几何类型 | 数量 | 示例 |
-| --- | --- | ---: | --- |
-| `facilities` | Point | 3 | 青岛站、五四广场、中山公园 |
-| `demo_roads` | LineString | 2 | 香港中路、山东路 |
-| `demo_zones` | Polygon | 2 | 市南中心服务区、浮山湾休闲区 |
-
-三张表均有稳定主键和 GiST 空间索引，为后续 WFS 查询及 WFS-T 编辑提供基础。
-
-## 核心概念
-
-- **WMS**：由服务端渲染地图图片，适合地图展示。
-- **WMTS**：按照固定瓦片矩阵提供缓存瓦片，适合高效浏览。
-- **WFS**：返回包含几何和属性的空间要素，可由前端直接渲染和查询。
-- **WFS-T**：通过 WFS Transaction 完成空间要素新增、修改和删除。
-
-## 环境要求
-
-- Node.js 20+
-- npm
-- Docker Desktop
+- Vue 3
+- TypeScript
+- Vite
+- OpenLayers 10.11.0
+- GeoServer 2.28.2
+- GeoWebCache
+- PostgreSQL 14
+- PostGIS 3.5
 - Docker Compose
 
-## 本地启动
+本地环境：Node.js v24.18.0、npm 11.16.0、Docker Compose v5.5.0。
 
-### 1. 配置本地密码
+## 运行
 
-在仓库根目录创建 `.env`：
+运行前在仓库根目录创建 `.env`：
 
 ```dotenv
-POSTGRES_PASSWORD=请设置本机数据库密码
+POSTGRES_PASSWORD=本机数据库密码
 GEOSERVER_ADMIN_USER=admin
-GEOSERVER_ADMIN_PASSWORD=请设置本机GeoServer密码
+GEOSERVER_ADMIN_PASSWORD=本机GeoServer管理员密码
+WFS_EDITOR_USER=ogc_editor
+WFS_EDITOR_PASSWORD=本机WFS编辑用户密码
 ```
 
-`.env` 已被 Git 忽略，不应提交真实密码。
+常用命令：
 
-### 2. 启动 PostGIS 与 GeoServer
+- `docker compose up -d`：启动 PostGIS 和 GeoServer
+- `docker compose ps`：查看容器状态
+- `cd frontend`：进入前端目录
+- `npm install`：安装前端依赖
+- `npm run dev`：启动本地开发环境
+- `npm run build`：检查类型并构建项目
 
-在仓库根目录执行：
+本地入口：
 
-```powershell
-docker compose config --quiet
-docker compose up -d
-docker compose ps
-```
-
-服务地址：
-
-| 服务 | 地址 |
-| --- | --- |
-| PostGIS | `127.0.0.1:15434` |
-| GeoServer | `http://localhost:18080/geoserver` |
-
-PostGIS 数据卷第一次创建时，会自动执行 `database/create_schema.sql`。已有数据卷时，普通容器重启不会重复执行初始化脚本。
-
-## GeoServer 配置
-
-### 工作区
-
-```text
-Name: ogc_lab
-Namespace URI: http://localhost/ogc_lab
-```
-
-### PostGIS 数据源
-
-```text
-Data Source Name: ogc_lab_postgis
-host: postgis
-port: 5432
-database: ogc_lab
-schema: public
-user: ogc_lab
-passwd: 使用 .env 中的 POSTGRES_PASSWORD
-```
-
-GeoServer 运行在 Docker 容器中，因此连接数据库时使用 Compose 服务名 `postgis` 和容器端口 `5432`，不能填写宿主机地址 `localhost:15434`。
-
-### 已发布图层
-
-```text
-ogc_lab:facilities
-ogc_lab:demo_roads
-ogc_lab:demo_zones
-```
-
-## OGC 服务地址
-
-WMS GetCapabilities：
-
-```text
-http://localhost:18080/geoserver/ogc_lab/wms?service=WMS&request=GetCapabilities
-```
-
-WFS GetCapabilities：
-
-```text
-http://localhost:18080/geoserver/ogc_lab/wfs?service=WFS&request=GetCapabilities
-```
-
-设施点 GeoJSON：
-
-```text
-http://localhost:18080/geoserver/ogc_lab/ows?service=WFS&version=2.0.0&request=GetFeature&typeNames=ogc_lab:facilities&outputFormat=application/json
-```
-
-## WMTS 瓦片服务
-
-本项目通过 GeoServer 内置的 GeoWebCache 提供 WMTS 服务。
-
-WMTS GetCapabilities：
-
-```text
-http://localhost:18080/geoserver/gwc/service/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0
-```
-
-当前 `ogc_lab:facilities` 使用：
-
-```text
-TileMatrixSet: EPSG:900913
-Style: point
-Format: image/png
-RequestEncoding: KVP
-```
-
-`EPSG:900913` 是 Web Mercator 的早期编号，与 OpenLayers 默认视图使用的 `EPSG:3857` 等价。前端读取能力文档后创建 WMTS 图层，并通过独立开关与 WMS 图层进行对比。
-
-详细请求参数、矩阵概念、透明瓦片说明和验收记录见 [`docs/wmts.md`](docs/wmts.md)。
-
-## WFS 要素查询
-
-本项目通过 WFS 2.0.0 获取设施点、道路和服务范围面的 GeoJSON，并由 OpenLayers 在浏览器端绘制矢量要素。
-
-当前 WFS 查询具备：
-
-- 使用 `BBOX` 按地图当前范围请求点、线、面数据；
-- 将服务端 `EPSG:4326` 数据转换到地图使用的 `EPSG:3857`；
-- 使用不同客户端样式绘制 Point、LineString 和 Polygon；
-- 点击选择要素并显示编号、名称、类型和几何类型；
-- 显示加载中、成功、空结果和请求失败状态。
-
-详细请求示例、投影转换、前端调用链和验收方式见 [`docs/wfs.md`](docs/wfs.md)。
+- `http://localhost:5173/`：OGC 服务与地图交互主页面
+- `http://localhost:5173/#/vector-formats`：矢量数据格式实验页面
+- `http://localhost:18080/geoserver`：GeoServer 管理页面
